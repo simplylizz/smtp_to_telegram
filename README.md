@@ -1,12 +1,12 @@
 # SMTP to Telegram
 
-[![Docker Hub](https://img.shields.io/docker/pulls/kostyaesmukov/smtp_to_telegram.svg?style=flat-square)][Docker Hub]
-[![Go Report Card](https://goreportcard.com/badge/github.com/KostyaEsmukov/smtp_to_telegram?style=flat-square)][Go Report Card]
-[![License](https://img.shields.io/github/license/KostyaEsmukov/smtp_to_telegram.svg?style=flat-square)][License]
+[![Docker Hub](https://img.shields.io/docker/pulls/simplylizz/smtp_to_telegram.svg?style=flat-square)][Docker Hub]
+[![Go Report Card](https://goreportcard.com/badge/github.com/simplylizz/smtp_to_telegram?style=flat-square)][Go Report Card]
+[![License](https://img.shields.io/github/license/simplylizz/smtp_to_telegram.svg?style=flat-square)][License]
 
-[Docker Hub]:      https://hub.docker.com/r/kostyaesmukov/smtp_to_telegram
-[Go Report Card]:  https://goreportcard.com/report/github.com/KostyaEsmukov/smtp_to_telegram
-[License]:         https://github.com/KostyaEsmukov/smtp_to_telegram/blob/master/LICENSE
+[Docker Hub]:      https://hub.docker.com/r/simplylizz/smtp_to_telegram
+[Go Report Card]:  https://goreportcard.com/report/github.com/simplylizz/smtp_to_telegram
+[License]:         https://github.com/simplylizz/smtp_to_telegram/blob/main/LICENSE
 
 `smtp_to_telegram` is a small program which listens for SMTP and sends
 all incoming Email messages to Telegram.
@@ -21,6 +21,7 @@ the notification mail would be sent to the chosen Telegram chats.
 2. Open that bot account in the Telegram account which should receive
    the messages, press `/start`.
 3. Retrieve a chat id with `curl https://api.telegram.org/bot<BOT_TOKEN>/getUpdates`.
+   If you don't see chat id, try writing one more message to the bot.
 4. Repeat steps 2 and 3 for each Telegram account which should receive the messages.
 5. Start a docker container:
 
@@ -29,7 +30,7 @@ docker run \
     --name smtp_to_telegram \
     -e ST_TELEGRAM_CHAT_IDS=<CHAT_ID1>,<CHAT_ID2> \
     -e ST_TELEGRAM_BOT_TOKEN=<BOT_TOKEN> \
-    kostyaesmukov/smtp_to_telegram
+    simplylizz/smtp_to_telegram
 ```
 
 Assuming that your Email-sending software is running in docker as well,
@@ -51,5 +52,5 @@ docker run \
     -e ST_TELEGRAM_BOT_TOKEN=<BOT_TOKEN> \
     -e ST_TELEGRAM_MESSAGE_TEMPLATE="Subject: {subject}\\n\\n{body}" \
     -e ST_SMTP_ALLOWED_HOSTS=example.com,example2.com \
-    kostyaesmukov/smtp_to_telegram
+    simplylizz/smtp_to_telegram
 ```
