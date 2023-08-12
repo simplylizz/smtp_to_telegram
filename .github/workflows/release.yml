@@ -42,5 +42,5 @@ jobs:
           push: true
           build-args: ST_VERSION=${{ github.ref_name }}
           tags: |
-            $DOCKERHUB_USERNAME/smtp_to_telegram:latest
-            $DOCKERHUB_USERNAME/smtp_to_telegram:${{ github.ref_name }}
+            ${{ vars.DOCKERHUB_USERNAME }}/smtp_to_telegram:latest
+            ${{ vars.DOCKERHUB_USERNAME }}/smtp_to_telegram:${{ github.ref_name }}
