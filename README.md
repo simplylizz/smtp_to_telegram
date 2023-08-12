@@ -23,18 +23,14 @@ the notification mail would be sent to the chosen Telegram chats.
 3. Retrieve a chat id with `curl https://api.telegram.org/bot<BOT_TOKEN>/getUpdates`.
    If you don't see chat id, try writing one more message to the bot.
 4. Repeat steps 2 and 3 for each Telegram account which should receive the messages.
-5. Start a docker container:
+5. Create `env_file` from `env_file.example` and fill it with your data. 
+6. Start a docker container:
 
 ```
-docker run \
-    --name smtp_to_telegram \
-    -e ST_TELEGRAM_CHAT_IDS=<CHAT_ID1>,<CHAT_ID2> \
-    -e ST_TELEGRAM_BOT_TOKEN=<BOT_TOKEN> \
-    simplylizz/smtp_to_telegram
+docker compose up
 ```
 
-Assuming that your Email-sending software is running in docker as well,
-you may use `smtp_to_telegram:2525` as the target SMTP address.
+You may use `localhost:25` as the target SMTP address.
 No TLS or authentication is required.
 
 The default Telegram message format is:
@@ -46,11 +42,8 @@ From: {from}\\nTo: {to}\\nSubject: {subject}\\n\\n{body}\\n\\n{attachments_detai
 A custom format might be specified as well:
 
 ```
-docker run \
-    --name smtp_to_telegram \
-    -e ST_TELEGRAM_CHAT_IDS=<CHAT_ID1>,<CHAT_ID2> \
-    -e ST_TELEGRAM_BOT_TOKEN=<BOT_TOKEN> \
-    -e ST_TELEGRAM_MESSAGE_TEMPLATE="Subject: {subject}\\n\\n{body}" \
-    -e ST_SMTP_ALLOWED_HOSTS=example.com,example2.com \
-    simplylizz/smtp_to_telegram
+ST_TELEGRAM_CHAT_IDS=<CHAT_ID1>,<CHAT_ID2>
+ST_TELEGRAM_BOT_TOKEN=<BOT_TOKEN>
+ST_TELEGRAM_MESSAGE_TEMPLATE="Subject: {subject}\\n\\n{body}"
+ST_SMTP_ALLOWED_HOSTS=cvzilla.net,example.com
 ```

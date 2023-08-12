@@ -1,0 +1,7 @@
+services:
+  smtp-relay:
+    image: "simplylizz/smtp_to_telegram:latest"
+    restart: "unless-stopped"
+    ports:
+      - "25:2525"
+    env_file: "./env_file.prd"
