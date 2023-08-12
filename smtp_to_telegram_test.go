@@ -269,19 +269,19 @@ func TestAttachmentsSending(t *testing.T) {
 	m.Attach("attachment.jpg", goMailBody([]byte("JPG")))
 
 	expFiles := []*FormattedAttachment{
-		&FormattedAttachment{
+		{
 			filename: "inline.jpg",
 			caption:  "inline.jpg",
 			content:  []byte("JPG"),
 			fileType: ATTACHMENT_TYPE_PHOTO,
 		},
-		&FormattedAttachment{
+		{
 			filename: "hey.txt",
 			caption:  "hey.txt",
 			content:  []byte("hi"),
 			fileType: ATTACHMENT_TYPE_DOCUMENT,
 		},
-		&FormattedAttachment{
+		{
 			filename: "attachment.jpg",
 			caption:  "attachment.jpg",
 			content:  []byte("JPG"),
@@ -338,7 +338,7 @@ func TestLargeMessageAggressivelyTruncated(t *testing.T) {
 			"\n" +
 			strings.Repeat("Hello_", 60)
 	expFiles := []*FormattedAttachment{
-		&FormattedAttachment{
+		{
 			filename: "full_message.txt",
 			caption:  "Full message",
 			content:  []byte(expFull),
@@ -387,7 +387,7 @@ func TestLargeMessageProperlyTruncated(t *testing.T) {
 			"\n" +
 			strings.Repeat("Hello_", 60)
 	expFiles := []*FormattedAttachment{
-		&FormattedAttachment{
+		{
 			filename: "full_message.txt",
 			caption:  "Full message",
 			content:  []byte(expFull),
@@ -447,13 +447,13 @@ func TestLargeMessageWithAttachmentsProperlyTruncated(t *testing.T) {
 			"Attachments:\n" +
 			"- 📎 attachment.jpg (image/jpeg) 3B, sending..."
 	expFiles := []*FormattedAttachment{
-		&FormattedAttachment{
+		{
 			filename: "full_message.txt",
 			caption:  "Full message",
 			content:  []byte(expFull),
 			fileType: ATTACHMENT_TYPE_DOCUMENT,
 		},
-		&FormattedAttachment{
+		{
 			filename: "attachment.jpg",
 			caption:  "attachment.jpg",
 			content:  []byte("JPG"),
@@ -529,7 +529,7 @@ hoho
 .`
 
 	expFiles := []*FormattedAttachment{
-		&FormattedAttachment{
+		{
 			filename: "tt",
 			caption:  "tt",
 			content:  []byte("hoho\n"),
@@ -606,7 +606,7 @@ aG9obwo=
 .`
 
 	expFiles := []*FormattedAttachment{
-		&FormattedAttachment{
+		{
 			filename: "tt",
 			caption:  "./tt",
 			content:  []byte("hoho\n"),

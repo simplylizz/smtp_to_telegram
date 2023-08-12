@@ -446,11 +446,11 @@ func SendAttachmentToChat(
 	return nil
 }
 
-func FormatEmail(e *mail.Envelope, telegramConfig *TelegramConfig) (*FormattedEmail, error) {
-	reader := e.NewReader()
+func FormatEmail(envelope *mail.Envelope, telegramConfig *TelegramConfig) (*FormattedEmail, error) {
+	reader := envelope.NewReader()
 	env, err := enmime.ReadEnvelope(reader)
 	if err != nil {
-		return nil, fmt.Errorf("%s\n\nError occurred during email parsing: %v", e, err)
+		return nil, fmt.Errorf("%s\n\nError occurred during email parsing: %v", envelope, err)
 	}
 	text := env.Text
 
@@ -514,7 +514,7 @@ func FormatEmail(e *mail.Envelope, telegramConfig *TelegramConfig) (*FormattedEm
 	}
 
 	if text == "" {
-		text = e.Data.String()
+		text = envelope.Data.String()
 	}
 
 	formattedAttachmentsDetails := ""
@@ -526,8 +526,8 @@ func FormatEmail(e *mail.Envelope, telegramConfig *TelegramConfig) (*FormattedEm
 	}
 
 	fullMessageText, truncatedMessageText := FormatMessage(
-		e.MailFrom.String(),
-		JoinEmailAddresses(e.RcptTo),
+		envelope.MailFrom.String(),
+		JoinEmailAddresses(envelope.RcptTo),
 		env.GetHeader("subject"),
 		text,
 		formattedAttachmentsDetails,
