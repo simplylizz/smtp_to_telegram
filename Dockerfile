@@ -1,4 +1,4 @@
-FROM golang:1.20-alpine3.18 AS builder
+FROM golang:1.21-alpine3.18 AS builder
 
 RUN apk add --no-cache git ca-certificates mailcap
 
@@ -14,10 +14,6 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
         -ldflags "-s -w \
             -X main.Version=${ST_VERSION:-UNKNOWN_RELEASE}" \
         -a -o smtp_to_telegram
-
-
-
-
 
 FROM alpine:3.18
 
