@@ -39,6 +39,7 @@ type SmtpConfig struct {
 	smtpListen          string
 	smtpPrimaryHost     string
 	smtpMaxEnvelopeSize int64
+	smtpAllowedHosts    string
 }
 
 type TelegramConfig struct {
@@ -104,6 +105,7 @@ func main() {
 			smtpListen:          ctx.String("smtp-listen"),
 			smtpPrimaryHost:     ctx.String("smtp-primary-host"),
 			smtpMaxEnvelopeSize: smtpMaxEnvelopeSize,
+			smtpAllowedHosts:    ctx.String("smtp-allowed-hosts"),
 		}
 		forwardedAttachmentMaxSize, err := units.FromHumanSize(ctx.String("forwarded-attachment-max-size"))
 		if err != nil {
@@ -145,6 +147,12 @@ func main() {
 			Value:   GetHostname(),
 			Usage:   "SMTP: primary host",
 			EnvVars: []string{"ST_SMTP_PRIMARY_HOST"},
+		},
+		&cli.StringFlag{
+			Name:    "smtp-allowed-hosts",
+			Usage:   "SMTP: allowed hosts separated by comma, default is any",
+			Value:   ".",
+			EnvVars: []string{"ST_SMTP_ALLOWED_HOSTS"},
 		},
 		&cli.StringFlag{
 			Name:    "smtp-max-envelope-size",
@@ -222,6 +230,19 @@ func main() {
 	}
 }
 
+func getAllowedHosts(smtpConfig *SmtpConfig) []string {
+	var allowedHosts []string
+	for _, host := range strings.Split(smtpConfig.smtpAllowedHosts, ",") {
+		allowedHosts = append(allowedHosts, host)
+	}
+
+	if len(allowedHosts) == 0 {
+		allowedHosts = append(allowedHosts, ".")
+	}
+
+	return allowedHosts
+}
+
 func SmtpStart(
 	smtpConfig *SmtpConfig,
 	telegramConfig *TelegramConfig,
@@ -229,7 +250,7 @@ func SmtpStart(
 
 	cfg := &guerrilla.AppConfig{LogFile: log.OutputStdout.String()}
 
-	cfg.AllowedHosts = []string{"."}
+	cfg.AllowedHosts = getAllowedHosts(smtpConfig)
 
 	sc := guerrilla.ServerConfig{
 		IsEnabled:       true,

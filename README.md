@@ -50,5 +50,6 @@ docker run \
     -e ST_TELEGRAM_CHAT_IDS=<CHAT_ID1>,<CHAT_ID2> \
     -e ST_TELEGRAM_BOT_TOKEN=<BOT_TOKEN> \
     -e ST_TELEGRAM_MESSAGE_TEMPLATE="Subject: {subject}\\n\\n{body}" \
+    -e ST_SMTP_ALLOWED_HOSTS=example.com,example2.com \
     kostyaesmukov/smtp_to_telegram
 ```
