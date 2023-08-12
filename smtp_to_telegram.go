@@ -5,13 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	units "github.com/docker/go-units"
-	"github.com/flashmob/go-guerrilla"
-	"github.com/flashmob/go-guerrilla/backends"
-	"github.com/flashmob/go-guerrilla/log"
-	"github.com/flashmob/go-guerrilla/mail"
-	"github.com/jhillyerd/enmime"
-	"github.com/urfave/cli/v2"
 	"io/ioutil"
 	"mime"
 	"mime/multipart"
@@ -23,6 +16,14 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/docker/go-units"
+	"github.com/flashmob/go-guerrilla"
+	"github.com/flashmob/go-guerrilla/backends"
+	"github.com/flashmob/go-guerrilla/log"
+	"github.com/flashmob/go-guerrilla/mail"
+	"github.com/jhillyerd/enmime"
+	"github.com/urfave/cli/v2"
 )
 
 var (
@@ -93,37 +94,37 @@ func main() {
 	app.Usage = "A small program which listens for SMTP and sends " +
 		"all incoming Email messages to Telegram."
 	app.Version = Version
-	app.Action = func(c *cli.Context) error {
-		smtpMaxEnvelopeSize, err := units.FromHumanSize(c.String("smtp-max-envelope-size"))
+	app.Action = func(ctx *cli.Context) error {
+		smtpMaxEnvelopeSize, err := units.FromHumanSize(ctx.String("smtp-max-envelope-size"))
 		if err != nil {
 			fmt.Printf("%s\n", err)
 			os.Exit(1)
 		}
 		smtpConfig := &SmtpConfig{
-			smtpListen:          c.String("smtp-listen"),
-			smtpPrimaryHost:     c.String("smtp-primary-host"),
+			smtpListen:          ctx.String("smtp-listen"),
+			smtpPrimaryHost:     ctx.String("smtp-primary-host"),
 			smtpMaxEnvelopeSize: smtpMaxEnvelopeSize,
 		}
-		forwardedAttachmentMaxSize, err := units.FromHumanSize(c.String("forwarded-attachment-max-size"))
+		forwardedAttachmentMaxSize, err := units.FromHumanSize(ctx.String("forwarded-attachment-max-size"))
 		if err != nil {
 			fmt.Printf("%s\n", err)
 			os.Exit(1)
 		}
-		forwardedAttachmentMaxPhotoSize, err := units.FromHumanSize(c.String("forwarded-attachment-max-photo-size"))
+		forwardedAttachmentMaxPhotoSize, err := units.FromHumanSize(ctx.String("forwarded-attachment-max-photo-size"))
 		if err != nil {
 			fmt.Printf("%s\n", err)
 			os.Exit(1)
 		}
 		telegramConfig := &TelegramConfig{
-			telegramChatIds:                  c.String("telegram-chat-ids"),
-			telegramBotToken:                 c.String("telegram-bot-token"),
-			telegramApiPrefix:                c.String("telegram-api-prefix"),
-			telegramApiTimeoutSeconds:        c.Float64("telegram-api-timeout-seconds"),
-			messageTemplate:                  c.String("message-template"),
+			telegramChatIds:                  ctx.String("telegram-chat-ids"),
+			telegramBotToken:                 ctx.String("telegram-bot-token"),
+			telegramApiPrefix:                ctx.String("telegram-api-prefix"),
+			telegramApiTimeoutSeconds:        ctx.Float64("telegram-api-timeout-seconds"),
+			messageTemplate:                  ctx.String("message-template"),
 			forwardedAttachmentMaxSize:       int(forwardedAttachmentMaxSize),
 			forwardedAttachmentMaxPhotoSize:  int(forwardedAttachmentMaxPhotoSize),
-			forwardedAttachmentRespectErrors: c.Bool("forwarded-attachment-respect-errors"),
-			messageLengthToSendAsFile:        c.Uint("message-length-to-send-as-file"),
+			forwardedAttachmentRespectErrors: ctx.Bool("forwarded-attachment-respect-errors"),
+			messageLengthToSendAsFile:        ctx.Uint("message-length-to-send-as-file"),
 		}
 		d, err := SmtpStart(smtpConfig, telegramConfig)
 		if err != nil {
@@ -222,7 +223,9 @@ func main() {
 }
 
 func SmtpStart(
-	smtpConfig *SmtpConfig, telegramConfig *TelegramConfig) (guerrilla.Daemon, error) {
+	smtpConfig *SmtpConfig,
+	telegramConfig *TelegramConfig,
+) (guerrilla.Daemon, error) {
 
 	cfg := &guerrilla.AppConfig{LogFile: log.OutputStdout.String()}
 
@@ -253,31 +256,34 @@ func SmtpStart(
 }
 
 func TelegramBotProcessorFactory(
-	telegramConfig *TelegramConfig) func() backends.Decorator {
+	telegramConfig *TelegramConfig,
+) func() backends.Decorator {
 	return func() backends.Decorator {
 		// https://github.com/flashmob/go-guerrilla/wiki/Backends,-configuring-and-extending
 
 		return func(p backends.Processor) backends.Processor {
 			return backends.ProcessWith(
-				func(e *mail.Envelope, task backends.SelectTask) (backends.Result, error) {
+				func(envelope *mail.Envelope, task backends.SelectTask) (backends.Result, error) {
 					if task == backends.TaskSaveMail {
-						err := SendEmailToTelegram(e, telegramConfig)
+						err := SendEmailToTelegram(envelope, telegramConfig)
 						if err != nil {
 							return backends.NewResult(fmt.Sprintf("554 Error: %s", err)), err
 						}
-						return p.Process(e, task)
+						return p.Process(envelope, task)
 					}
-					return p.Process(e, task)
+					return p.Process(envelope, task)
 				},
 			)
 		}
 	}
 }
 
-func SendEmailToTelegram(e *mail.Envelope,
-	telegramConfig *TelegramConfig) error {
+func SendEmailToTelegram(
+	envelope *mail.Envelope,
+	telegramConfig *TelegramConfig,
+) error {
 
-	message, err := FormatEmail(e, telegramConfig)
+	message, err := FormatEmail(envelope, telegramConfig)
 	if err != nil {
 		return err
 	}
