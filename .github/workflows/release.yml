@@ -17,6 +17,8 @@ jobs:
         uses: actions/setup-go@v4
         with:
           go-version: "1.21"
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
       - name: Login to Docker Hub
         uses: docker/login-action@v2
         with:
@@ -32,3 +34,13 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push to dockerhub
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: ST_VERSION=${{ github.ref_name }}
+          tags: |
+            $DOCKERHUB_USERNAME/smtp_to_telegram:latest
+            $DOCKERHUB_USERNAME/smtp_to_telegram:${{ github.ref_name }}
