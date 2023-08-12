@@ -12,4 +12,4 @@ test-release:
 		-e DOCKER_REGISTRY \
 		-v /var/run/docker.sock:/var/run/docker.sock \
 		goreleaser/goreleaser-cross:${GOLANG_CROSS_VERSION} \
-		--rm-dist --skip-validate --timeout=1h --snapshot
+		--clean --skip-validate --timeout=1h --snapshot
