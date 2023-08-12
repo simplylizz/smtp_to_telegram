@@ -1,4 +1,4 @@
-GOLANG_CROSS_VERSION ?= v1.21.1
+GOLANG_CROSS_VERSION ?= v1.21.0
 
 test-release:
 	@docker run \
