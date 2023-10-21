@@ -236,8 +236,8 @@ func getAllowedHosts(smtpConfig *SmtpConfig) []string {
 		allowedHosts = append(allowedHosts, host)
 	}
 
-	if len(allowedHosts) == 0 {
-		allowedHosts = append(allowedHosts, ".")
+	if len(allowedHosts) == 1 && allowedHosts[0] == "" {
+		allowedHosts[0] = "."
 	}
 
 	return allowedHosts
