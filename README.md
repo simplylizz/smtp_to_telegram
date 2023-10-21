@@ -8,6 +8,8 @@
 [Go Report Card]:  https://goreportcard.com/report/github.com/simplylizz/smtp_to_telegram
 [License]:         https://github.com/simplylizz/smtp_to_telegram/blob/main/LICENSE
 
+Forked from [KostyaEsmukov/smtp_to_telegram](https://github.com/KostyaEsmukov/smtp_to_telegram) package.
+
 `smtp_to_telegram` is a small program which listens for SMTP and sends
 all incoming Email messages to Telegram.
 
@@ -23,7 +25,7 @@ the notification mail would be sent to the chosen Telegram chats.
 3. Retrieve a chat id with `curl https://api.telegram.org/bot<BOT_TOKEN>/getUpdates`.
    If you don't see chat id, try writing one more message to the bot.
 4. Repeat steps 2 and 3 for each Telegram account which should receive the messages.
-5. Create `env_file` from `env_file.example` and fill it with your data. 
+5. Create `env_file` from `env_file.example` and fill it with your data.
 6. Start a docker container:
 
 ```
