@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flashmob/go-guerrilla"
-	"github.com/stretchr/testify/assert"
+	"github.com/phires/go-guerrilla"
+	"github.com/stretchr/testify/require"
 	"gopkg.in/gomail.v2"
 )
 
@@ -81,9 +81,9 @@ func TestSuccess(t *testing.T) {
 	defer s.Shutdown(context.Background())
 
 	err := smtp.SendMail(smtpConfig.smtpListen, nil, "from@test", []string{"to@test"}, []byte(`hi`))
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
-	assert.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIds, ",")))
+	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIds, ",")))
 	exp :=
 		"From: from@test\n" +
 			"To: to@test\n" +
@@ -91,7 +91,7 @@ func TestSuccess(t *testing.T) {
 			"\n" +
 			"hi"
 
-	assert.Equal(t, exp, h.RequestMessages[0])
+	require.Equal(t, exp, h.RequestMessages[0])
 }
 
 func TestSuccessCustomFormat(t *testing.T) {
@@ -107,14 +107,14 @@ func TestSuccessCustomFormat(t *testing.T) {
 	defer s.Shutdown(context.Background())
 
 	err := smtp.SendMail(smtpConfig.smtpListen, nil, "from@test", []string{"to@test"}, []byte(`hi`))
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
-	assert.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIds, ",")))
+	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIds, ",")))
 	exp := "Subject: \n" +
 		"\n" +
 		"hi"
 
-	assert.Equal(t, exp, h.RequestMessages[0])
+	require.Equal(t, exp, h.RequestMessages[0])
 }
 
 func TestTelegramUnreachable(t *testing.T) {
@@ -124,7 +124,7 @@ func TestTelegramUnreachable(t *testing.T) {
 	defer d.Shutdown()
 
 	err := smtp.SendMail(smtpConfig.smtpListen, nil, "from@test", []string{"to@test"}, []byte(`hi`))
-	assert.NotNil(t, err)
+	require.NotNil(t, err)
 }
 
 func TestTelegramHttpError(t *testing.T) {
@@ -137,7 +137,7 @@ func TestTelegramHttpError(t *testing.T) {
 	defer s.Shutdown(context.Background())
 
 	err := smtp.SendMail(smtpConfig.smtpListen, nil, "from@test", []string{"to@test"}, []byte(`hi`))
-	assert.NotNil(t, err)
+	require.NotNil(t, err)
 }
 
 func TestEncodedContent(t *testing.T) {
@@ -157,16 +157,16 @@ func TestEncodedContent(t *testing.T) {
 			"\r\n" +
 			"=F0=9F=92=A9\r\n")
 	err := smtp.SendMail(smtpConfig.smtpListen, nil, "from@test", []string{"to@test"}, b)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
-	assert.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIds, ",")))
+	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIds, ",")))
 	exp :=
 		"From: from@test\n" +
 			"To: to@test\n" +
 			"Subject: 😎\n" +
 			"\n" +
 			"💩"
-	assert.Equal(t, exp, h.RequestMessages[0])
+	require.Equal(t, exp, h.RequestMessages[0])
 }
 
 func TestHtmlAttachmentIsIgnored(t *testing.T) {
@@ -188,16 +188,16 @@ func TestHtmlAttachmentIsIgnored(t *testing.T) {
 
 	di := gomail.NewPlainDialer(testSmtpListenHost, testSmtpListenPort, "", "")
 	err := di.DialAndSend(m)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
-	assert.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIds, ",")))
+	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIds, ",")))
 	exp :=
 		"From: from@test\n" +
 			"To: to@test\n" +
 			"Subject: Test subj\n" +
 			"\n" +
 			"Text body"
-	assert.Equal(t, exp, h.RequestMessages[0])
+	require.Equal(t, exp, h.RequestMessages[0])
 }
 
 func TestAttachmentsDetails(t *testing.T) {
@@ -225,10 +225,10 @@ func TestAttachmentsDetails(t *testing.T) {
 
 	di := gomail.NewPlainDialer(testSmtpListenHost, testSmtpListenPort, "", "")
 	err := di.DialAndSend(m)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
-	assert.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIds, ",")))
-	assert.Len(t, h.RequestDocuments, 0)
+	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIds, ",")))
+	require.Len(t, h.RequestDocuments, 0)
 	exp :=
 		"From: from@test\n" +
 			"To: to@test\n" +
@@ -240,7 +240,7 @@ func TestAttachmentsDetails(t *testing.T) {
 			"- 🔗 inline.jpg (image/jpeg) 3B, discarded\n" +
 			"- 📎 hey.txt (text/plain) 2B, discarded\n" +
 			"- 📎 attachment.jpg (image/jpeg) 3B, discarded"
-	assert.Equal(t, exp, h.RequestMessages[0])
+	require.Equal(t, exp, h.RequestMessages[0])
 }
 
 func TestAttachmentsSending(t *testing.T) {
@@ -291,10 +291,10 @@ func TestAttachmentsSending(t *testing.T) {
 
 	di := gomail.NewPlainDialer(testSmtpListenHost, testSmtpListenPort, "", "")
 	err := di.DialAndSend(m)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
-	assert.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIds, ",")))
-	assert.Len(t, h.RequestDocuments, len(expFiles)*len(strings.Split(telegramConfig.telegramChatIds, ",")))
+	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIds, ",")))
+	require.Len(t, h.RequestDocuments, len(expFiles)*len(strings.Split(telegramConfig.telegramChatIds, ",")))
 	exp :=
 		"From: from@test\n" +
 			"To: to@test\n" +
@@ -306,9 +306,9 @@ func TestAttachmentsSending(t *testing.T) {
 			"- 🔗 inline.jpg (image/jpeg) 3B, sending...\n" +
 			"- 📎 hey.txt (text/plain) 2B, sending...\n" +
 			"- 📎 attachment.jpg (image/jpeg) 3B, sending..."
-	assert.Equal(t, exp, h.RequestMessages[0])
+	require.Equal(t, exp, h.RequestMessages[0])
 	for i, expDoc := range expFiles {
-		assert.Equal(t, expDoc, h.RequestDocuments[i])
+		require.Equal(t, expDoc, h.RequestDocuments[i])
 	}
 }
 
@@ -348,16 +348,16 @@ func TestLargeMessageAggressivelyTruncated(t *testing.T) {
 
 	di := gomail.NewPlainDialer(testSmtpListenHost, testSmtpListenPort, "", "")
 	err := di.DialAndSend(m)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
-	assert.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIds, ",")))
-	assert.Len(t, h.RequestDocuments, len(strings.Split(telegramConfig.telegramChatIds, ",")))
+	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIds, ",")))
+	require.Len(t, h.RequestDocuments, len(strings.Split(telegramConfig.telegramChatIds, ",")))
 
 	exp :=
 		"From: from@t"
-	assert.Equal(t, exp, h.RequestMessages[0])
+	require.Equal(t, exp, h.RequestMessages[0])
 	for i, expDoc := range expFiles {
-		assert.Equal(t, expDoc, h.RequestDocuments[i])
+		require.Equal(t, expDoc, h.RequestDocuments[i])
 	}
 }
 
@@ -397,10 +397,10 @@ func TestLargeMessageProperlyTruncated(t *testing.T) {
 
 	di := gomail.NewPlainDialer(testSmtpListenHost, testSmtpListenPort, "", "")
 	err := di.DialAndSend(m)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
-	assert.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIds, ",")))
-	assert.Len(t, h.RequestDocuments, len(strings.Split(telegramConfig.telegramChatIds, ",")))
+	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIds, ",")))
+	require.Len(t, h.RequestDocuments, len(strings.Split(telegramConfig.telegramChatIds, ",")))
 
 	exp :=
 		"From: from@test\n" +
@@ -410,9 +410,9 @@ func TestLargeMessageProperlyTruncated(t *testing.T) {
 			"Hello_Hello_Hello_Hello_Hello_Hello_He\n" +
 			"\n" +
 			"[truncated]"
-	assert.Equal(t, exp, h.RequestMessages[0])
+	require.Equal(t, exp, h.RequestMessages[0])
 	for i, expDoc := range expFiles {
-		assert.Equal(t, expDoc, h.RequestDocuments[i])
+		require.Equal(t, expDoc, h.RequestDocuments[i])
 	}
 }
 
@@ -463,10 +463,10 @@ func TestLargeMessageWithAttachmentsProperlyTruncated(t *testing.T) {
 
 	di := gomail.NewPlainDialer(testSmtpListenHost, testSmtpListenPort, "", "")
 	err := di.DialAndSend(m)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
-	assert.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIds, ",")))
-	assert.Len(t, h.RequestDocuments, 2*len(strings.Split(telegramConfig.telegramChatIds, ",")))
+	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIds, ",")))
+	require.Len(t, h.RequestDocuments, 2*len(strings.Split(telegramConfig.telegramChatIds, ",")))
 
 	exp :=
 		"From: from@test\n" +
@@ -479,9 +479,9 @@ func TestLargeMessageWithAttachmentsProperlyTruncated(t *testing.T) {
 			"\n" +
 			"Attachments:\n" +
 			"- 📎 attachment.jpg (image/jpeg) 3B, sending..."
-	assert.Equal(t, exp, h.RequestMessages[0])
+	require.Equal(t, exp, h.RequestMessages[0])
 	for i, expDoc := range expFiles {
-		assert.Equal(t, expDoc, h.RequestDocuments[i])
+		require.Equal(t, expDoc, h.RequestDocuments[i])
 	}
 }
 
@@ -539,13 +539,13 @@ hoho
 
 	di := gomail.NewPlainDialer(testSmtpListenHost, testSmtpListenPort, "", "")
 	ds, err := di.Dial()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	defer ds.Close()
 	err = ds.Send("from@test", []string{"to@test"}, bytes.NewBufferString(m))
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
-	assert.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIds, ",")))
-	assert.Len(t, h.RequestDocuments, len(expFiles)*len(strings.Split(telegramConfig.telegramChatIds, ",")))
+	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIds, ",")))
+	require.Len(t, h.RequestDocuments, len(expFiles)*len(strings.Split(telegramConfig.telegramChatIds, ",")))
 	exp :=
 		"From: from@test\n" +
 			"To: to@test\n" +
@@ -555,9 +555,9 @@ hoho
 			"\n" +
 			"Attachments:\n" +
 			"- 📎 tt (text/plain) 5B, sending..."
-	assert.Equal(t, exp, h.RequestMessages[0])
+	require.Equal(t, exp, h.RequestMessages[0])
 	for i, expDoc := range expFiles {
-		assert.Equal(t, expDoc, h.RequestDocuments[i])
+		require.Equal(t, expDoc, h.RequestDocuments[i])
 	}
 }
 
@@ -616,13 +616,13 @@ aG9obwo=
 
 	di := gomail.NewPlainDialer(testSmtpListenHost, testSmtpListenPort, "", "")
 	ds, err := di.Dial()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	defer ds.Close()
 	err = ds.Send("from@test", []string{"to@test"}, bytes.NewBufferString(m))
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
-	assert.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIds, ",")))
-	assert.Len(t, h.RequestDocuments, len(expFiles)*len(strings.Split(telegramConfig.telegramChatIds, ",")))
+	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIds, ",")))
+	require.Len(t, h.RequestDocuments, len(expFiles)*len(strings.Split(telegramConfig.telegramChatIds, ",")))
 	exp :=
 		"From: from@test\n" +
 			"To: to@test\n" +
@@ -632,9 +632,9 @@ aG9obwo=
 			"\n" +
 			"Attachments:\n" +
 			"- 📎 ./tt (application/octet-stream) 5B, sending..."
-	assert.Equal(t, exp, h.RequestMessages[0])
+	require.Equal(t, exp, h.RequestMessages[0])
 	for i, expDoc := range expFiles {
-		assert.Equal(t, expDoc, h.RequestDocuments[i])
+		require.Equal(t, expDoc, h.RequestDocuments[i])
 	}
 }
 
@@ -660,16 +660,16 @@ Content-Transfer-Encoding: base64
 QW5uYS1W6XJvbmlxdWUK
 `
 	err := smtp.SendMail(smtpConfig.smtpListen, nil, "from@test", []string{"to@test"}, []byte(m))
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
-	assert.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIds, ",")))
+	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIds, ",")))
 	exp :=
 		"From: from@test\n" +
 			"To: to@test\n" +
 			"Subject: Anna-Véronique\n" +
 			"\n" +
 			"Anna-Véronique"
-	assert.Equal(t, exp, h.RequestMessages[0])
+	require.Equal(t, exp, h.RequestMessages[0])
 }
 
 func HttpServer(handler http.Handler) *http.Server {
@@ -679,7 +679,9 @@ func HttpServer(handler http.Handler) *http.Server {
 		panic(err)
 	}
 	go func() {
-		h.Serve(ln)
+		if err := h.Serve(ln); err != nil {
+			logger.Error(err)
+		}
 	}()
 	return h
 }

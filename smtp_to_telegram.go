@@ -18,11 +18,11 @@ import (
 	"time"
 
 	"github.com/docker/go-units"
-	"github.com/flashmob/go-guerrilla"
-	"github.com/flashmob/go-guerrilla/backends"
-	"github.com/flashmob/go-guerrilla/log"
-	"github.com/flashmob/go-guerrilla/mail"
 	"github.com/jhillyerd/enmime"
+	"github.com/phires/go-guerrilla"
+	"github.com/phires/go-guerrilla/backends"
+	"github.com/phires/go-guerrilla/log"
+	"github.com/phires/go-guerrilla/mail"
 	"github.com/urfave/cli/v2"
 )
 
@@ -280,7 +280,7 @@ func TelegramBotProcessorFactory(
 	telegramConfig *TelegramConfig,
 ) func() backends.Decorator {
 	return func() backends.Decorator {
-		// https://github.com/flashmob/go-guerrilla/wiki/Backends,-configuring-and-extending
+		// https://github.com/phires/go-guerrilla/wiki/Backends,-configuring-and-extending
 
 		return func(p backends.Processor) backends.Processor {
 			return backends.ProcessWith(
