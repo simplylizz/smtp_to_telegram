@@ -35,17 +35,28 @@ docker compose up
 You may use `localhost:25` as the target SMTP address.
 No TLS or authentication is required.
 
-The default Telegram message format is:
+## How to use
 
+Request to check the service:
 ```
-From: {from}\\nTo: {to}\\nSubject: {subject}\\n\\n{body}\\n\\n{attachments_details}
+curl \
+  --url 'smtp://localhost:25' \
+  --mail-from sender@test.test \
+  --mail-rcpt user@test.test --mail-rcpt user1@test.test \
+  -H "Subject: Test smtp_to_telegram" -F '=(;type=multipart/mixed' -F "=This message came via smtp;type=text/plain" -F '=)'
 ```
+
+## Options
 
 A custom format might be specified as well:
-
 ```
-ST_TELEGRAM_CHAT_IDS=<CHAT_ID1>,<CHAT_ID2>
 ST_TELEGRAM_BOT_TOKEN=<BOT_TOKEN>
-ST_TELEGRAM_MESSAGE_TEMPLATE="Subject: {subject}\\n\\n{body}"
-ST_SMTP_ALLOWED_HOSTS=cvzilla.net,example.com
+ST_TELEGRAM_CHAT_IDS=<CHAT_ID1>,<CHAT_ID2>
+ST_TELEGRAM_MESSAGE_TEMPLATE="Subject: {subject}\\n\\n{body}" # optional
+ST_SMTP_ALLOWED_HOSTS=cvzilla.net,example.com # optional
+```
+
+The default Telegram message format is:
+```
+From: {from}\\nTo: {to}\\nSubject: {subject}\\n\\n{body}\\n\\n{attachments_details}
 ```
