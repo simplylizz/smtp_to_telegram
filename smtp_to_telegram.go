@@ -164,7 +164,6 @@ func main() {
 			Name:     "telegram-chat-ids",
 			Usage:    "Telegram: comma-separated list of chat ids",
 			EnvVars:  []string{"ST_TELEGRAM_CHAT_IDS"},
-			Required: true,
 		},
 		&cli.StringFlag{
 			Name:     "telegram-bot-token",
@@ -313,7 +312,22 @@ func SendEmailToTelegram(
 		Timeout: time.Duration(telegramConfig.telegramApiTimeoutSeconds*1000) * time.Millisecond,
 	}
 
-	for _, chatId := range strings.Split(telegramConfig.telegramChatIds, ",") {
+	chatIdList := []string{}
+	classicEmail := false
+	for _, rcptTo := range envelope.RcptTo {
+		rcptToSplit := strings.Split(rcptTo.String(),"@");
+		if rcptToSplit[1] == "telegram.org" {
+			chatIdList = append(chatIdList, rcptToSplit[0])
+		} else {
+			classicEmail = true
+		}
+	}
+	
+	if classicEmail == true && telegramConfig.telegramChatIds != "" {
+		chatIdList = append(chatIdList, strings.Split(telegramConfig.telegramChatIds, ",")...)
+	}
+	
+	for _, chatId := range chatIdList {
 		sentMessage, err := SendMessageToChat(message, chatId, telegramConfig, &client)
 		if err != nil {
 			// If unable to send at least one message -- reject the whole email.
