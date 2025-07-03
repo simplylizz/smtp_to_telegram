@@ -325,7 +325,6 @@ func SmtpStart(
 
 	logger = daemon.Log()
 
-	// Load blacklist after logger is initialized
 	if err := loadBlacklist(smtpConfig.blacklistFile); err != nil {
 		logger.Errorf("Failed to load blacklist: %s", err)
 	}
@@ -361,7 +360,6 @@ func SendEmailToTelegram(
 	envelope *mail.Envelope,
 	telegramConfig *TelegramConfig,
 ) error {
-	// Check if sender is blacklisted
 	if isBlacklisted(envelope.MailFrom.String()) {
 		logger.Infof("Rejecting email from blacklisted sender: %s", envelope.MailFrom.String())
 		return fmt.Errorf("sender %s is blacklisted", envelope.MailFrom.String())
