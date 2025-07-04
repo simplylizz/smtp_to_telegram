@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/smtp"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -752,4 +753,68 @@ type ErrorHandler struct{}
 func (s *ErrorHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(400)
 	w.Write([]byte("Error"))
+}
+
+func TestLoadBlacklist(t *testing.T) {
+	// Create a temporary blacklist file
+	tmpfile, err := os.CreateTemp("", "blacklist_test*.txt")
+	require.NoError(t, err)
+	defer os.Remove(tmpfile.Name())
+
+	// Write test data
+	content := `# Test blacklist
+spam@example.com
+UPPERCASE@TEST.COM
+  spaced@email.com  
+# comment line
+valid@email.com
+# Domain blacklists
+blacklisted.com
+SPAM-DOMAIN.ORG
+  spaced-domain.net  
+`
+	_, err = tmpfile.WriteString(content)
+	require.NoError(t, err)
+	tmpfile.Close()
+
+	// Load the blacklist
+	err = loadBlacklist(tmpfile.Name())
+	require.NoError(t, err)
+
+	// Test blacklisted emails
+	require.True(t, isBlacklisted("spam@example.com"))
+	require.True(t, isBlacklisted("SPAM@EXAMPLE.COM")) // Case insensitive
+	require.True(t, isBlacklisted("uppercase@test.com"))
+	require.True(t, isBlacklisted("UPPERCASE@TEST.COM"))
+	require.True(t, isBlacklisted("spaced@email.com"))
+	require.True(t, isBlacklisted("  spaced@email.com  ")) // With spaces
+	require.True(t, isBlacklisted("valid@email.com"))
+
+	// Test domain blacklisting
+	require.True(t, isBlacklisted("anyone@blacklisted.com"))
+	require.True(t, isBlacklisted("test@blacklisted.com"))
+	require.True(t, isBlacklisted("ADMIN@BLACKLISTED.COM")) // Case insensitive
+	require.True(t, isBlacklisted("user@spam-domain.org"))
+	require.True(t, isBlacklisted("USER@SPAM-DOMAIN.ORG")) // Case insensitive
+	require.True(t, isBlacklisted("test@spaced-domain.net"))
+	require.True(t, isBlacklisted("  someone@spaced-domain.net  ")) // With spaces
+
+	// Test non-blacklisted emails
+	require.False(t, isBlacklisted("good@example.com"))
+	require.False(t, isBlacklisted("user@gooddomain.com"))
+	require.False(t, isBlacklisted(""))
+}
+
+func TestLoadBlacklistEmptyFile(t *testing.T) {
+	// Test with empty filename
+	err := loadBlacklist("")
+	require.NoError(t, err)
+	require.False(t, isBlacklisted("any@email.com"))
+}
+
+func TestLoadBlacklistNonExistentFile(t *testing.T) {
+	// Test with non-existent file
+	err := loadBlacklist("/non/existent/file.txt")
+	require.NoError(t, err) // Should not error, just warn
+	require.False(t, isBlacklisted("any@email.com"))
 }

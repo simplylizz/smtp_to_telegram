@@ -284,7 +284,7 @@ func loadBlacklist(filename string) error {
 	}
 
 	if logger != nil {
-		logger.Infof("Loaded %d blacklisted emails from %s", len(blacklist), filename)
+		logger.Infof("Loaded %d blacklisted emails/domains from %s", len(blacklist), filename)
 	}
 	return nil
 }
@@ -293,7 +293,26 @@ func isBlacklisted(email string) bool {
 	if blacklist == nil {
 		return false
 	}
-	return blacklist[strings.ToLower(strings.TrimSpace(email))]
+	
+	email = strings.ToLower(strings.TrimSpace(email))
+	
+	// Check exact email match
+	if blacklist[email] {
+		return true
+	}
+	
+	// Check domain blacklist
+	// Extract domain from email
+	atIndex := strings.LastIndex(email, "@")
+	if atIndex != -1 && atIndex < len(email)-1 {
+		domain := email[atIndex+1:]
+		// Check if domain is blacklisted (without @ prefix)
+		if blacklist[domain] {
+			return true
+		}
+	}
+	
+	return false
 }
 
 func SmtpStart(
