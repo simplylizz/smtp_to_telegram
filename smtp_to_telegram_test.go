@@ -824,3 +824,42 @@ func TestSmtpStartWithNonExistentBlacklistFile(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to load blacklist")
 }
+
+func TestBlacklistedEmailReturns554Error(t *testing.T) {
+	// Create a temporary blacklist file
+	tmpfile, err := os.CreateTemp("", "blacklist_smtp_test*.txt")
+	require.NoError(t, err)
+	defer os.Remove(tmpfile.Name())
+
+	// Write blacklisted emails and domains
+	content := `blocked@example.com
+spammer.net
+`
+	_, err = tmpfile.WriteString(content)
+	require.NoError(t, err)
+	tmpfile.Close()
+
+	smtpConfig := makeSmtpConfig()
+	smtpConfig.blacklistFile = tmpfile.Name()
+	telegramConfig := makeTelegramConfig()
+	d := startSmtp(smtpConfig, telegramConfig)
+	defer d.Shutdown()
+
+	// Test blacklisted individual email
+	err = smtp.SendMail(smtpConfig.smtpListen, nil, "blocked@example.com", []string{"to@test"}, []byte(`hi`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "554")
+	require.Contains(t, err.Error(), "blocked@example.com is blacklisted")
+
+	// Test blacklisted domain
+	err = smtp.SendMail(smtpConfig.smtpListen, nil, "anyone@spammer.net", []string{"to@test"}, []byte(`hi`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "554")
+	require.Contains(t, err.Error(), "anyone@spammer.net is blacklisted")
+
+	// Test non-blacklisted email should fail with different error (no telegram server running)
+	err = smtp.SendMail(smtpConfig.smtpListen, nil, "good@example.com", []string{"to@test"}, []byte(`hi`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "554") // Still 554 but different message
+	require.NotContains(t, err.Error(), "blacklisted")
+}
