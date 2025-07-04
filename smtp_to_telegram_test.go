@@ -761,7 +761,6 @@ func TestLoadBlacklist(t *testing.T) {
 	require.NoError(t, err)
 	defer os.Remove(tmpfile.Name())
 
-	// Write test data
 	content := `# Test blacklist
 spam@example.com
 UPPERCASE@TEST.COM
@@ -777,7 +776,6 @@ SPAM-DOMAIN.ORG
 	require.NoError(t, err)
 	tmpfile.Close()
 
-	// Load the blacklist
 	err = loadBlacklist(tmpfile.Name())
 	require.NoError(t, err)
 
@@ -815,6 +813,16 @@ func TestLoadBlacklistEmptyFile(t *testing.T) {
 func TestLoadBlacklistNonExistentFile(t *testing.T) {
 	// Test with non-existent file
 	err := loadBlacklist("/non/existent/file.txt")
-	require.NoError(t, err) // Should not error, just warn
-	require.False(t, isBlacklisted("any@email.com"))
+	require.Error(t, err) // Should error if file is specified but doesn't exist
+	require.Contains(t, err.Error(), "failed to open blacklist file")
+}
+
+func TestSmtpStartWithNonExistentBlacklistFile(t *testing.T) {
+	smtpConfig := makeSmtpConfig()
+	smtpConfig.blacklistFile = "/non/existent/blacklist.txt"
+	telegramConfig := makeTelegramConfig()
+
+	_, err := SmtpStart(smtpConfig, telegramConfig)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed to load blacklist")
 }

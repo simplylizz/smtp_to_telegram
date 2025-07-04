@@ -261,13 +261,7 @@ func loadBlacklist(filename string) error {
 
 	file, err := os.Open(filename)
 	if err != nil {
-		if os.IsNotExist(err) {
-			if logger != nil {
-				logger.Warnf("Blacklist file not found: %s", filename)
-			}
-			return nil
-		}
-		return err
+		return fmt.Errorf("failed to open blacklist file: %w", err)
 	}
 	defer file.Close()
 
@@ -293,25 +287,21 @@ func isBlacklisted(email string) bool {
 	if blacklist == nil {
 		return false
 	}
-	
+
 	email = strings.ToLower(strings.TrimSpace(email))
-	
-	// Check exact email match
+
 	if blacklist[email] {
 		return true
 	}
-	
-	// Check domain blacklist
-	// Extract domain from email
+
 	atIndex := strings.LastIndex(email, "@")
 	if atIndex != -1 && atIndex < len(email)-1 {
 		domain := email[atIndex+1:]
-		// Check if domain is blacklisted (without @ prefix)
 		if blacklist[domain] {
 			return true
 		}
 	}
-	
+
 	return false
 }
 
@@ -345,7 +335,7 @@ func SmtpStart(
 	logger = daemon.Log()
 
 	if err := loadBlacklist(smtpConfig.blacklistFile); err != nil {
-		logger.Errorf("Failed to load blacklist: %s", err)
+		return daemon, fmt.Errorf("failed to load blacklist: %w", err)
 	}
 
 	err := daemon.Start()
