@@ -803,17 +803,15 @@ SPAM-DOMAIN.ORG
 	require.False(t, isBlacklisted(""))
 }
 
-func TestLoadBlacklistEmptyFile(t *testing.T) {
-	// Test with empty filename
+func TestLoadBlacklistEmptyFilename(t *testing.T) {
 	err := loadBlacklist("")
 	require.NoError(t, err)
 	require.False(t, isBlacklisted("any@email.com"))
 }
 
 func TestLoadBlacklistNonExistentFile(t *testing.T) {
-	// Test with non-existent file
 	err := loadBlacklist("/non/existent/file.txt")
-	require.Error(t, err) // Should error if file is specified but doesn't exist
+	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to open blacklist file")
 }
 
