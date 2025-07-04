@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -27,8 +28,9 @@ import (
 )
 
 var (
-	Version string = "UNKNOWN_RELEASE"
-	logger  log.Logger
+	Version   string = "UNKNOWN_RELEASE"
+	logger    log.Logger
+	blacklist map[string]bool
 )
 
 const (
@@ -40,6 +42,7 @@ type SmtpConfig struct {
 	smtpPrimaryHost     string
 	smtpMaxEnvelopeSize int64
 	smtpAllowedHosts    string
+	blacklistFile       string
 }
 
 type TelegramConfig struct {
@@ -106,6 +109,7 @@ func main() {
 			smtpPrimaryHost:     ctx.String("smtp-primary-host"),
 			smtpMaxEnvelopeSize: smtpMaxEnvelopeSize,
 			smtpAllowedHosts:    ctx.String("smtp-allowed-hosts"),
+			blacklistFile:       ctx.String("blacklist-file"),
 		}
 		forwardedAttachmentMaxSize, err := units.FromHumanSize(ctx.String("forwarded-attachment-max-size"))
 		if err != nil {
@@ -159,6 +163,11 @@ func main() {
 			Usage:   "Max size of an incoming Email. Examples: 5k, 10m.",
 			Value:   "50m",
 			EnvVars: []string{"ST_SMTP_MAX_ENVELOPE_SIZE"},
+		},
+		&cli.StringFlag{
+			Name:    "blacklist-file",
+			Usage:   "Path to a file containing blacklisted email addresses (one per line)",
+			EnvVars: []string{"ST_BLACKLIST_FILE"},
 		},
 		&cli.StringFlag{
 			Name:     "telegram-chat-ids",
@@ -243,6 +252,59 @@ func getAllowedHosts(smtpConfig *SmtpConfig) []string {
 	return allowedHosts
 }
 
+func loadBlacklist(filename string) error {
+	blacklist = make(map[string]bool)
+
+	if filename == "" {
+		return nil
+	}
+
+	file, err := os.Open(filename)
+	if err != nil {
+		return fmt.Errorf("failed to open blacklist file: %w", err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		email := strings.TrimSpace(strings.ToLower(scanner.Text()))
+		if email != "" && !strings.HasPrefix(email, "#") {
+			blacklist[email] = true
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+
+	if logger != nil {
+		logger.Infof("Loaded %d blacklisted emails/domains from %s", len(blacklist), filename)
+	}
+	return nil
+}
+
+func isBlacklisted(email string) bool {
+	if blacklist == nil {
+		return false
+	}
+
+	email = strings.ToLower(strings.TrimSpace(email))
+
+	if blacklist[email] {
+		return true
+	}
+
+	atIndex := strings.LastIndex(email, "@")
+	if atIndex != -1 && atIndex < len(email)-1 {
+		domain := email[atIndex+1:]
+		if blacklist[domain] {
+			return true
+		}
+	}
+
+	return false
+}
+
 func SmtpStart(
 	smtpConfig *SmtpConfig,
 	telegramConfig *TelegramConfig,
@@ -271,6 +333,10 @@ func SmtpStart(
 	daemon.AddProcessor("TelegramBot", TelegramBotProcessorFactory(telegramConfig))
 
 	logger = daemon.Log()
+
+	if err := loadBlacklist(smtpConfig.blacklistFile); err != nil {
+		return daemon, fmt.Errorf("failed to load blacklist: %w", err)
+	}
 
 	err := daemon.Start()
 	return daemon, err
@@ -303,6 +369,10 @@ func SendEmailToTelegram(
 	envelope *mail.Envelope,
 	telegramConfig *TelegramConfig,
 ) error {
+	if isBlacklisted(envelope.MailFrom.String()) {
+		logger.Infof("Rejecting email from blacklisted sender: %s", envelope.MailFrom.String())
+		return fmt.Errorf("sender %s is blacklisted", envelope.MailFrom.String())
+	}
 
 	message, err := FormatEmail(envelope, telegramConfig)
 	if err != nil {

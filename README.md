@@ -49,3 +49,30 @@ ST_TELEGRAM_BOT_TOKEN=<BOT_TOKEN>
 ST_TELEGRAM_MESSAGE_TEMPLATE="Subject: {subject}\\n\\n{body}"
 ST_SMTP_ALLOWED_HOSTS=cvzilla.net,example.com
 ```
+
+## Blacklisting Senders
+
+You can blacklist specific email addresses to prevent them from being forwarded to Telegram. This is useful for blocking spam or unwanted notifications.
+
+To use the blacklist feature:
+
+1. Create a blacklist file with one email address per line:
+   ```
+   spam@example.com
+   unwanted@test.com
+   noreply@someservice.com
+   ```
+
+2. Lines starting with `#` are treated as comments and ignored.
+
+3. Configure the blacklist file path using the environment variable:
+   ```
+   ST_BLACKLIST_FILE=/path/to/blacklist.txt
+   ```
+
+   Or use the command line flag:
+   ```
+   --blacklist-file /path/to/blacklist.txt
+   ```
+
+When an email from a blacklisted sender is received, it will be rejected with a 554 SMTP error and not forwarded to Telegram. The blacklist is case-insensitive, so `SPAM@EXAMPLE.COM` and `spam@example.com` are treated as the same address.

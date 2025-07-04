@@ -1,3 +1,4 @@
 ST_TELEGRAM_CHAT_IDS=167820000
 ST_TELEGRAM_BOT_TOKEN=your-telegram-bot-token-here
 ST_SMTP_ALLOWED_HOSTS=cvzilla.net
+ST_BLACKLIST_FILE=/path/to/blacklist.txt
