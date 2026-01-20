@@ -755,122 +755,13 @@ func (s *ErrorHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("Error"))
 }
 
-func TestLoadBlacklist(t *testing.T) {
-	// Create a temporary blacklist file
-	tmpfile, err := os.CreateTemp("", "blacklist_test*.txt")
-	require.NoError(t, err)
-	defer os.Remove(tmpfile.Name())
-
-	content := `# Test blacklist
-spam@example.com
-UPPERCASE@TEST.COM
-  spaced@email.com  
-# comment line
-valid@email.com
-# Domain blacklists
-blacklisted.com
-SPAM-DOMAIN.ORG
-  spaced-domain.net  
-`
-	_, err = tmpfile.WriteString(content)
-	require.NoError(t, err)
-	tmpfile.Close()
-
-	err = loadBlacklist(tmpfile.Name())
-	require.NoError(t, err)
-
-	// Test blacklisted emails
-	require.True(t, isBlacklisted("spam@example.com"))
-	require.True(t, isBlacklisted("SPAM@EXAMPLE.COM")) // Case insensitive
-	require.True(t, isBlacklisted("uppercase@test.com"))
-	require.True(t, isBlacklisted("UPPERCASE@TEST.COM"))
-	require.True(t, isBlacklisted("spaced@email.com"))
-	require.True(t, isBlacklisted("  spaced@email.com  ")) // With spaces
-	require.True(t, isBlacklisted("valid@email.com"))
-
-	// Test domain blacklisting
-	require.True(t, isBlacklisted("anyone@blacklisted.com"))
-	require.True(t, isBlacklisted("test@blacklisted.com"))
-	require.True(t, isBlacklisted("ADMIN@BLACKLISTED.COM")) // Case insensitive
-	require.True(t, isBlacklisted("user@spam-domain.org"))
-	require.True(t, isBlacklisted("USER@SPAM-DOMAIN.ORG")) // Case insensitive
-	require.True(t, isBlacklisted("test@spaced-domain.net"))
-	require.True(t, isBlacklisted("  someone@spaced-domain.net  ")) // With spaces
-
-	// Test non-blacklisted emails
-	require.False(t, isBlacklisted("good@example.com"))
-	require.False(t, isBlacklisted("user@gooddomain.com"))
-	require.False(t, isBlacklisted(""))
-}
-
-func TestLoadBlacklistEmptyFilename(t *testing.T) {
-	err := loadBlacklist("")
-	require.NoError(t, err)
-	require.False(t, isBlacklisted("any@email.com"))
-}
-
-func TestLoadBlacklistNonExistentFile(t *testing.T) {
-	err := loadBlacklist("/non/existent/file.txt")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "failed to open blacklist file")
-}
-
-func TestSmtpStartWithNonExistentBlacklistFile(t *testing.T) {
-	smtpConfig := makeSmtpConfig()
-	smtpConfig.blacklistFile = "/non/existent/blacklist.txt"
-	telegramConfig := makeTelegramConfig()
-
-	_, err := SmtpStart(smtpConfig, telegramConfig)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "failed to load blacklist")
-}
-
-func TestBlacklistedEmailReturns554Error(t *testing.T) {
-	// Create a temporary blacklist file
-	tmpfile, err := os.CreateTemp("", "blacklist_smtp_test*.txt")
-	require.NoError(t, err)
-	defer os.Remove(tmpfile.Name())
-
-	// Write blacklisted emails and domains
-	content := `blocked@example.com
-spammer.net
-`
-	_, err = tmpfile.WriteString(content)
-	require.NoError(t, err)
-	tmpfile.Close()
-
-	smtpConfig := makeSmtpConfig()
-	smtpConfig.blacklistFile = tmpfile.Name()
-	telegramConfig := makeTelegramConfig()
-	d := startSmtp(smtpConfig, telegramConfig)
-	defer d.Shutdown()
-
-	// Test blacklisted individual email
-	err = smtp.SendMail(smtpConfig.smtpListen, nil, "blocked@example.com", []string{"to@test"}, []byte(`hi`))
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "554")
-	require.Contains(t, err.Error(), "blocked@example.com is blacklisted")
-
-	// Test blacklisted domain
-	err = smtp.SendMail(smtpConfig.smtpListen, nil, "anyone@spammer.net", []string{"to@test"}, []byte(`hi`))
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "554")
-	require.Contains(t, err.Error(), "anyone@spammer.net is blacklisted")
-
-	// Test non-blacklisted email should fail with different error (no telegram server running)
-	err = smtp.SendMail(smtpConfig.smtpListen, nil, "good@example.com", []string{"to@test"}, []byte(`hi`))
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "554") // Still 554 but different message
-	require.NotContains(t, err.Error(), "blacklisted")
-}
-
 func TestLoadFilterRules(t *testing.T) {
 	// Create a temporary filter rules file
 	tmpfile, err := os.CreateTemp("", "filter_rules_test*.yaml")
 	require.NoError(t, err)
 	defer os.Remove(tmpfile.Name())
 
-	content := `rules:
+	content := `filter_rules:
   - name: block-spam
     conditions:
       - field: subject
@@ -904,7 +795,7 @@ func TestLoadFilterRulesEmptyFilename(t *testing.T) {
 func TestLoadFilterRulesNonExistentFile(t *testing.T) {
 	err := loadFilterRules("/non/existent/file.yaml")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "failed to read filter rules file")
+	require.Contains(t, err.Error(), "failed to read config file")
 }
 
 func TestLoadFilterRulesInvalidRegex(t *testing.T) {
@@ -912,7 +803,7 @@ func TestLoadFilterRulesInvalidRegex(t *testing.T) {
 	require.NoError(t, err)
 	defer os.Remove(tmpfile.Name())
 
-	content := `rules:
+	content := `filter_rules:
   - name: bad-regex
     conditions:
       - field: subject
@@ -933,7 +824,7 @@ func TestLoadFilterRulesInvalidMatchType(t *testing.T) {
 	require.NoError(t, err)
 	defer os.Remove(tmpfile.Name())
 
-	content := `rules:
+	content := `filter_rules:
   - name: bad-match
     match: invalid
     conditions:
@@ -955,7 +846,7 @@ func TestFilterRulesMatchAll(t *testing.T) {
 	require.NoError(t, err)
 	defer os.Remove(tmpfile.Name())
 
-	content := `rules:
+	content := `filter_rules:
   - name: block-dating-spam
     match: all
     conditions:
@@ -995,7 +886,7 @@ func TestFilterRulesMatchAny(t *testing.T) {
 	require.NoError(t, err)
 	defer os.Remove(tmpfile.Name())
 
-	content := `rules:
+	content := `filter_rules:
   - name: block-spam-domains
     match: any
     conditions:
@@ -1037,7 +928,7 @@ func TestFilterRulesFieldMatching(t *testing.T) {
 	require.NoError(t, err)
 	defer os.Remove(tmpfile.Name())
 
-	content := `rules:
+	content := `filter_rules:
   - name: block-from
     conditions:
       - field: from
@@ -1106,7 +997,7 @@ func TestFilterRulesBodyOrHtml(t *testing.T) {
 	require.NoError(t, err)
 	defer os.Remove(tmpfile.Name())
 
-	content := `rules:
+	content := `filter_rules:
   - name: block-tracking-url
     conditions:
       - field: body_or_html
@@ -1145,7 +1036,7 @@ func TestFilterRulesHtmlOnlyEmail(t *testing.T) {
 	require.NoError(t, err)
 	defer os.Remove(tmpfile.Name())
 
-	content := `rules:
+	content := `filter_rules:
   - name: block-html-url
     conditions:
       - field: html
@@ -1173,7 +1064,7 @@ func TestFilterRulesFirstMatchWins(t *testing.T) {
 	require.NoError(t, err)
 	defer os.Remove(tmpfile.Name())
 
-	content := `rules:
+	content := `filter_rules:
   - name: first-rule
     conditions:
       - field: subject
@@ -1210,7 +1101,7 @@ func TestFilterRulesEmptyConditions(t *testing.T) {
 	require.NoError(t, err)
 	defer os.Remove(tmpfile.Name())
 
-	content := `rules:
+	content := `filter_rules:
   - name: empty-rule
     conditions: []
     action: reject
@@ -1229,12 +1120,12 @@ func TestFilterRulesEmptyConditions(t *testing.T) {
 
 func TestSmtpStartWithNonExistentFilterRulesFile(t *testing.T) {
 	smtpConfig := makeSmtpConfig()
-	smtpConfig.filterRulesFile = "/non/existent/filter_rules.yaml"
+	smtpConfig.configFile = "/non/existent/filter_rules.yaml"
 	telegramConfig := makeTelegramConfig()
 
 	_, err := SmtpStart(smtpConfig, telegramConfig)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "failed to load filter rules")
+	require.Contains(t, err.Error(), "failed to load config")
 }
 
 func TestFilteredEmailReturns554(t *testing.T) {
@@ -1243,7 +1134,7 @@ func TestFilteredEmailReturns554(t *testing.T) {
 	require.NoError(t, err)
 	defer os.Remove(tmpfile.Name())
 
-	content := `rules:
+	content := `filter_rules:
   - name: block-spam-subject
     conditions:
       - field: subject
@@ -1255,7 +1146,7 @@ func TestFilteredEmailReturns554(t *testing.T) {
 	tmpfile.Close()
 
 	smtpConfig := makeSmtpConfig()
-	smtpConfig.filterRulesFile = tmpfile.Name()
+	smtpConfig.configFile = tmpfile.Name()
 	telegramConfig := makeTelegramConfig()
 	d := startSmtp(smtpConfig, telegramConfig)
 	defer d.Shutdown()
@@ -1280,7 +1171,7 @@ func TestFilteredEmailWithBodyPattern(t *testing.T) {
 	require.NoError(t, err)
 	defer os.Remove(tmpfile.Name())
 
-	content := `rules:
+	content := `filter_rules:
   - name: block-tracking
     conditions:
       - field: body
@@ -1292,7 +1183,7 @@ func TestFilteredEmailWithBodyPattern(t *testing.T) {
 	tmpfile.Close()
 
 	smtpConfig := makeSmtpConfig()
-	smtpConfig.filterRulesFile = tmpfile.Name()
+	smtpConfig.configFile = tmpfile.Name()
 	telegramConfig := makeTelegramConfig()
 	d := startSmtp(smtpConfig, telegramConfig)
 	defer d.Shutdown()
@@ -1317,7 +1208,7 @@ func TestNonFilteredEmailPasses(t *testing.T) {
 	require.NoError(t, err)
 	defer os.Remove(tmpfile.Name())
 
-	content := `rules:
+	content := `filter_rules:
   - name: block-spam
     conditions:
       - field: subject
@@ -1329,7 +1220,7 @@ func TestNonFilteredEmailPasses(t *testing.T) {
 	tmpfile.Close()
 
 	smtpConfig := makeSmtpConfig()
-	smtpConfig.filterRulesFile = tmpfile.Name()
+	smtpConfig.configFile = tmpfile.Name()
 	telegramConfig := makeTelegramConfig()
 	d := startSmtp(smtpConfig, telegramConfig)
 	defer d.Shutdown()

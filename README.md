@@ -50,29 +50,86 @@ ST_TELEGRAM_MESSAGE_TEMPLATE="Subject: {subject}\\n\\n{body}"
 ST_SMTP_ALLOWED_HOSTS=cvzilla.net,example.com
 ```
 
-## Blacklisting Senders
+## Configuration File
 
-You can blacklist specific email addresses to prevent them from being forwarded to Telegram. This is useful for blocking spam or unwanted notifications.
+You can define filter rules in a YAML configuration file. Rules match against email fields (from, to, subject, body, html) using regex patterns and reject emails that match.
 
-To use the blacklist feature:
+### Setup
 
-1. Create a blacklist file with one email address per line:
-   ```
-   spam@example.com
-   unwanted@test.com
-   noreply@someservice.com
-   ```
+Configure the config file path using the environment variable:
+```
+ST_CONFIG_FILE=/path/to/config.yaml
+```
 
-2. Lines starting with `#` are treated as comments and ignored.
+Or use the command line flag:
+```
+--config-file /path/to/config.yaml
+```
 
-3. Configure the blacklist file path using the environment variable:
-   ```
-   ST_BLACKLIST_FILE=/path/to/blacklist.txt
-   ```
+### Example Configuration
 
-   Or use the command line flag:
-   ```
-   --blacklist-file /path/to/blacklist.txt
-   ```
+```yaml
+filter_rules:
+  # Simple rule: single condition
+  - name: block-adnxs-tracking
+    conditions:
+      - field: body
+        pattern: 'adnxs\.com'
+    action: reject
 
-When an email from a blacklisted sender is received, it will be rejected with a 554 SMTP error and not forwarded to Telegram. The blacklist is case-insensitive, so `SPAM@EXAMPLE.COM` and `spam@example.com` are treated as the same address.
+  # AND logic: ALL conditions must match (default)
+  - name: block-dating-spam
+    match: all
+    conditions:
+      - field: from
+        pattern: '@ecinetworks\.com$'
+      - field: subject
+        pattern: '(?i)get(ting)? to know'
+    action: reject
+
+  # OR logic: ANY condition matches
+  - name: block-spam-domains
+    match: any
+    conditions:
+      - field: body
+        pattern: 'cdnex\.online'
+      - field: body
+        pattern: 'spam-tracker\.net'
+      - field: body
+        pattern: 'click-now\.xyz'
+    action: reject
+
+  # Match URLs in HTML-only emails
+  - name: block-html-tracking
+    conditions:
+      - field: body_or_html
+        pattern: 'https?://[^\s]+\.(xyz|top|click)'
+    action: reject
+```
+
+### Rule Structure
+
+| Field | Description |
+|-------|-------------|
+| `name` | Rule identifier (used in logs) |
+| `match` | `all` (default) - all conditions must match; `any` - at least one condition must match |
+| `conditions` | List of conditions to evaluate |
+| `action` | Currently only `reject` is supported |
+
+### Available Fields
+
+| Field | Description |
+|-------|-------------|
+| `from` | Sender email address |
+| `to` | Recipient email address |
+| `subject` | Email subject line |
+| `body` | Plain text body |
+| `html` | HTML body |
+| `body_or_html` | Matches if pattern found in either body OR html (recommended for URL matching) |
+
+### How It Works
+
+1. Rules are loaded and regex patterns are compiled at startup (invalid patterns cause startup failure)
+2. After an email is parsed, each rule is evaluated in order
+3. First matching "reject" rule blocks the email with a 554 SMTP error
+4. If no rules match, the email is forwarded to Telegram
