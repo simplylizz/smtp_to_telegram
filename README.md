@@ -76,7 +76,6 @@ filter_rules:
       - field: body
         pattern: 'adnxs\.com'
 
-
   # AND logic: ALL conditions must match (default)
   - name: block-dating-spam
     match: all
@@ -84,8 +83,7 @@ filter_rules:
       - field: from
         pattern: '@ecinetworks\.com$'
       - field: subject
-        pattern: '(?i)get(ting)? to know'
-
+        pattern: 'get(ting)? to know'
 
   # OR logic: ANY condition matches
   - name: block-spam-domains
@@ -97,7 +95,6 @@ filter_rules:
         pattern: 'spam-tracker\.net'
       - field: body
         pattern: 'click-now\.xyz'
-
 
   # Match URLs in HTML-only emails
   - name: block-html-tracking
@@ -128,7 +125,8 @@ filter_rules:
 
 ### How It Works
 
-1. Rules are loaded and regex patterns are compiled at startup (invalid patterns cause startup failure)
-2. After an email is parsed, each rule is evaluated in order
-3. First matching rule rejects the email with a 554 SMTP error
-4. If no rules match, the email is forwarded to Telegram
+1. Rules are loaded and regex patterns are compiled at startup (invalid patterns or field names cause startup failure)
+2. All patterns are **case-insensitive**
+3. After an email is parsed, each rule is evaluated in order
+4. First matching rule rejects the email with a 554 SMTP error
+5. If no rules match, the email is forwarded to Telegram

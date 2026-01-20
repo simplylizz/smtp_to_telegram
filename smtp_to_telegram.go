@@ -302,6 +302,11 @@ func loadFilterRules(filename string) error {
 		return fmt.Errorf("failed to parse config YAML: %w", err)
 	}
 
+	validFields := map[string]bool{
+		"from": true, "to": true, "subject": true,
+		"body": true, "html": true, "body_or_html": true,
+	}
+
 	// Compile regex patterns
 	for i := range config.FilterRules {
 		rule := &config.FilterRules[i]
@@ -314,7 +319,15 @@ func loadFilterRules(filename string) error {
 		}
 		for j := range rule.Conditions {
 			cond := &rule.Conditions[j]
-			compiled, err := regexp.Compile(cond.Pattern)
+			if !validFields[cond.Field] {
+				return fmt.Errorf("rule '%s': invalid field '%s' (must be one of: from, to, subject, body, html, body_or_html)", rule.Name, cond.Field)
+			}
+			// Make pattern case-insensitive
+			pattern := cond.Pattern
+			if !strings.HasPrefix(pattern, "(?i)") {
+				pattern = "(?i)" + pattern
+			}
+			compiled, err := regexp.Compile(pattern)
 			if err != nil {
 				return fmt.Errorf("rule '%s': invalid regex pattern '%s': %w", rule.Name, cond.Pattern, err)
 			}

@@ -765,7 +765,7 @@ func TestLoadFilterRules(t *testing.T) {
   - name: block-spam
     conditions:
       - field: subject
-        pattern: '(?i)spam'
+        pattern: 'spam'
 
   - name: block-domain
     match: all
@@ -819,6 +819,27 @@ func TestLoadFilterRulesInvalidRegex(t *testing.T) {
 	require.Contains(t, err.Error(), "invalid regex pattern")
 }
 
+func TestLoadFilterRulesInvalidField(t *testing.T) {
+	tmpfile, err := os.CreateTemp("", "filter_rules_invalid_field*.yaml")
+	require.NoError(t, err)
+	defer os.Remove(tmpfile.Name())
+
+	content := `filter_rules:
+  - name: bad-field
+    conditions:
+      - field: subjekt
+        pattern: 'test'
+
+`
+	_, err = tmpfile.WriteString(content)
+	require.NoError(t, err)
+	tmpfile.Close()
+
+	err = loadFilterRules(tmpfile.Name())
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid field 'subjekt'")
+}
+
 func TestLoadFilterRulesInvalidMatchType(t *testing.T) {
 	tmpfile, err := os.CreateTemp("", "filter_rules_invalid_match*.yaml")
 	require.NoError(t, err)
@@ -853,7 +874,7 @@ func TestFilterRulesMatchAll(t *testing.T) {
       - field: from
         pattern: '@ecinetworks\.com$'
       - field: subject
-        pattern: '(?i)get(ting)? to know'
+        pattern: 'get(ting)? to know'
 
 `
 	_, err = tmpfile.WriteString(content)
@@ -863,7 +884,7 @@ func TestFilterRulesMatchAll(t *testing.T) {
 	err = loadFilterRules(tmpfile.Name())
 	require.NoError(t, err)
 
-	// Both conditions match - should reject
+	// Both conditions match - should reject (case-insensitive)
 	rejected, ruleName := checkFilterRules("sender@ecinetworks.com", "to@test.com", "Getting to know you", "body", "")
 	require.True(t, rejected)
 	require.Equal(t, "block-dating-spam", ruleName)
@@ -1089,6 +1110,38 @@ func TestFilterRulesFirstMatchWins(t *testing.T) {
 	require.Equal(t, "first-rule", ruleName)
 }
 
+func TestFilterRulesCaseInsensitive(t *testing.T) {
+	tmpfile, err := os.CreateTemp("", "filter_rules_case_insensitive*.yaml")
+	require.NoError(t, err)
+	defer os.Remove(tmpfile.Name())
+
+	content := `filter_rules:
+  - name: block-spam
+    conditions:
+      - field: subject
+        pattern: 'spam'
+
+`
+	_, err = tmpfile.WriteString(content)
+	require.NoError(t, err)
+	tmpfile.Close()
+
+	err = loadFilterRules(tmpfile.Name())
+	require.NoError(t, err)
+
+	// Pattern is lowercase, but should match uppercase
+	rejected, _ := checkFilterRules("from@test.com", "to@test.com", "SPAM MESSAGE", "body", "")
+	require.True(t, rejected)
+
+	// Mixed case should also match
+	rejected, _ = checkFilterRules("from@test.com", "to@test.com", "SpAm MeSsAgE", "body", "")
+	require.True(t, rejected)
+
+	// Lowercase should match too
+	rejected, _ = checkFilterRules("from@test.com", "to@test.com", "spam message", "body", "")
+	require.True(t, rejected)
+}
+
 func TestFilterRulesNoRulesLoaded(t *testing.T) {
 	filterRules = nil
 
@@ -1138,7 +1191,7 @@ func TestFilteredEmailReturns554(t *testing.T) {
   - name: block-spam-subject
     conditions:
       - field: subject
-        pattern: '(?i)spam test'
+        pattern: 'spam test'
 
 `
 	_, err = tmpfile.WriteString(content)
@@ -1151,7 +1204,7 @@ func TestFilteredEmailReturns554(t *testing.T) {
 	d := startSmtp(smtpConfig, telegramConfig)
 	defer d.Shutdown()
 
-	// Test filtered email returns 554
+	// Test filtered email returns 554 (case-insensitive)
 	m := gomail.NewMessage()
 	m.SetHeader("From", "from@test")
 	m.SetHeader("To", "to@test")
