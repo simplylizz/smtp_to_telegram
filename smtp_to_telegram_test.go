@@ -863,3 +863,491 @@ spammer.net
 	require.Contains(t, err.Error(), "554") // Still 554 but different message
 	require.NotContains(t, err.Error(), "blacklisted")
 }
+
+func TestLoadFilterRules(t *testing.T) {
+	// Create a temporary filter rules file
+	tmpfile, err := os.CreateTemp("", "filter_rules_test*.yaml")
+	require.NoError(t, err)
+	defer os.Remove(tmpfile.Name())
+
+	content := `rules:
+  - name: block-spam
+    conditions:
+      - field: subject
+        pattern: '(?i)spam'
+    action: reject
+  - name: block-domain
+    match: all
+    conditions:
+      - field: from
+        pattern: '@spammer\.com$'
+    action: reject
+`
+	_, err = tmpfile.WriteString(content)
+	require.NoError(t, err)
+	tmpfile.Close()
+
+	err = loadFilterRules(tmpfile.Name())
+	require.NoError(t, err)
+	require.Len(t, filterRules, 2)
+	require.Equal(t, "block-spam", filterRules[0].Name)
+	require.Equal(t, "all", filterRules[0].Match) // default
+	require.Equal(t, "block-domain", filterRules[1].Name)
+}
+
+func TestLoadFilterRulesEmptyFilename(t *testing.T) {
+	err := loadFilterRules("")
+	require.NoError(t, err)
+	require.Nil(t, filterRules)
+}
+
+func TestLoadFilterRulesNonExistentFile(t *testing.T) {
+	err := loadFilterRules("/non/existent/file.yaml")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed to read filter rules file")
+}
+
+func TestLoadFilterRulesInvalidRegex(t *testing.T) {
+	tmpfile, err := os.CreateTemp("", "filter_rules_invalid*.yaml")
+	require.NoError(t, err)
+	defer os.Remove(tmpfile.Name())
+
+	content := `rules:
+  - name: bad-regex
+    conditions:
+      - field: subject
+        pattern: '[invalid('
+    action: reject
+`
+	_, err = tmpfile.WriteString(content)
+	require.NoError(t, err)
+	tmpfile.Close()
+
+	err = loadFilterRules(tmpfile.Name())
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid regex pattern")
+}
+
+func TestLoadFilterRulesInvalidMatchType(t *testing.T) {
+	tmpfile, err := os.CreateTemp("", "filter_rules_invalid_match*.yaml")
+	require.NoError(t, err)
+	defer os.Remove(tmpfile.Name())
+
+	content := `rules:
+  - name: bad-match
+    match: invalid
+    conditions:
+      - field: subject
+        pattern: 'test'
+    action: reject
+`
+	_, err = tmpfile.WriteString(content)
+	require.NoError(t, err)
+	tmpfile.Close()
+
+	err = loadFilterRules(tmpfile.Name())
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid match type")
+}
+
+func TestFilterRulesMatchAll(t *testing.T) {
+	tmpfile, err := os.CreateTemp("", "filter_rules_match_all*.yaml")
+	require.NoError(t, err)
+	defer os.Remove(tmpfile.Name())
+
+	content := `rules:
+  - name: block-dating-spam
+    match: all
+    conditions:
+      - field: from
+        pattern: '@ecinetworks\.com$'
+      - field: subject
+        pattern: '(?i)get(ting)? to know'
+    action: reject
+`
+	_, err = tmpfile.WriteString(content)
+	require.NoError(t, err)
+	tmpfile.Close()
+
+	err = loadFilterRules(tmpfile.Name())
+	require.NoError(t, err)
+
+	// Both conditions match - should reject
+	rejected, ruleName := checkFilterRules("sender@ecinetworks.com", "to@test.com", "Getting to know you", "body", "")
+	require.True(t, rejected)
+	require.Equal(t, "block-dating-spam", ruleName)
+
+	// Only from matches - should not reject
+	rejected, _ = checkFilterRules("sender@ecinetworks.com", "to@test.com", "Hello", "body", "")
+	require.False(t, rejected)
+
+	// Only subject matches - should not reject
+	rejected, _ = checkFilterRules("sender@other.com", "to@test.com", "Getting to know you", "body", "")
+	require.False(t, rejected)
+
+	// Neither matches - should not reject
+	rejected, _ = checkFilterRules("sender@other.com", "to@test.com", "Hello", "body", "")
+	require.False(t, rejected)
+}
+
+func TestFilterRulesMatchAny(t *testing.T) {
+	tmpfile, err := os.CreateTemp("", "filter_rules_match_any*.yaml")
+	require.NoError(t, err)
+	defer os.Remove(tmpfile.Name())
+
+	content := `rules:
+  - name: block-spam-domains
+    match: any
+    conditions:
+      - field: body
+        pattern: 'cdnex\.online'
+      - field: body
+        pattern: 'spam-tracker\.net'
+      - field: body
+        pattern: 'click-now\.xyz'
+    action: reject
+`
+	_, err = tmpfile.WriteString(content)
+	require.NoError(t, err)
+	tmpfile.Close()
+
+	err = loadFilterRules(tmpfile.Name())
+	require.NoError(t, err)
+
+	// First condition matches - should reject
+	rejected, ruleName := checkFilterRules("from@test.com", "to@test.com", "subject", "Visit cdnex.online", "")
+	require.True(t, rejected)
+	require.Equal(t, "block-spam-domains", ruleName)
+
+	// Second condition matches - should reject
+	rejected, _ = checkFilterRules("from@test.com", "to@test.com", "subject", "Check spam-tracker.net", "")
+	require.True(t, rejected)
+
+	// Third condition matches - should reject
+	rejected, _ = checkFilterRules("from@test.com", "to@test.com", "subject", "Click click-now.xyz", "")
+	require.True(t, rejected)
+
+	// None match - should not reject
+	rejected, _ = checkFilterRules("from@test.com", "to@test.com", "subject", "Clean body text", "")
+	require.False(t, rejected)
+}
+
+func TestFilterRulesFieldMatching(t *testing.T) {
+	tmpfile, err := os.CreateTemp("", "filter_rules_fields*.yaml")
+	require.NoError(t, err)
+	defer os.Remove(tmpfile.Name())
+
+	content := `rules:
+  - name: block-from
+    conditions:
+      - field: from
+        pattern: 'blocked@'
+    action: reject
+  - name: block-to
+    conditions:
+      - field: to
+        pattern: 'blocked-recipient@'
+    action: reject
+  - name: block-subject
+    conditions:
+      - field: subject
+        pattern: 'BLOCKED_SUBJECT'
+    action: reject
+  - name: block-body
+    conditions:
+      - field: body
+        pattern: 'BLOCKED_BODY'
+    action: reject
+  - name: block-html
+    conditions:
+      - field: html
+        pattern: 'BLOCKED_HTML'
+    action: reject
+`
+	_, err = tmpfile.WriteString(content)
+	require.NoError(t, err)
+	tmpfile.Close()
+
+	err = loadFilterRules(tmpfile.Name())
+	require.NoError(t, err)
+
+	// Test from field
+	rejected, ruleName := checkFilterRules("blocked@example.com", "to@test.com", "subject", "body", "html")
+	require.True(t, rejected)
+	require.Equal(t, "block-from", ruleName)
+
+	// Test to field
+	rejected, ruleName = checkFilterRules("from@test.com", "blocked-recipient@test.com", "subject", "body", "html")
+	require.True(t, rejected)
+	require.Equal(t, "block-to", ruleName)
+
+	// Test subject field
+	rejected, ruleName = checkFilterRules("from@test.com", "to@test.com", "BLOCKED_SUBJECT here", "body", "html")
+	require.True(t, rejected)
+	require.Equal(t, "block-subject", ruleName)
+
+	// Test body field
+	rejected, ruleName = checkFilterRules("from@test.com", "to@test.com", "subject", "Contains BLOCKED_BODY", "html")
+	require.True(t, rejected)
+	require.Equal(t, "block-body", ruleName)
+
+	// Test html field
+	rejected, ruleName = checkFilterRules("from@test.com", "to@test.com", "subject", "body", "<p>BLOCKED_HTML</p>")
+	require.True(t, rejected)
+	require.Equal(t, "block-html", ruleName)
+
+	// Test no match
+	rejected, _ = checkFilterRules("good@example.com", "good@test.com", "good subject", "good body", "good html")
+	require.False(t, rejected)
+}
+
+func TestFilterRulesBodyOrHtml(t *testing.T) {
+	tmpfile, err := os.CreateTemp("", "filter_rules_body_or_html*.yaml")
+	require.NoError(t, err)
+	defer os.Remove(tmpfile.Name())
+
+	content := `rules:
+  - name: block-tracking-url
+    conditions:
+      - field: body_or_html
+        pattern: 'adnxs\.com'
+    action: reject
+`
+	_, err = tmpfile.WriteString(content)
+	require.NoError(t, err)
+	tmpfile.Close()
+
+	err = loadFilterRules(tmpfile.Name())
+	require.NoError(t, err)
+
+	// Pattern in body only - should reject
+	rejected, ruleName := checkFilterRules("from@test.com", "to@test.com", "subject", "Visit adnxs.com", "")
+	require.True(t, rejected)
+	require.Equal(t, "block-tracking-url", ruleName)
+
+	// Pattern in html only - should reject
+	rejected, ruleName = checkFilterRules("from@test.com", "to@test.com", "subject", "", "<a href='http://adnxs.com'>link</a>")
+	require.True(t, rejected)
+	require.Equal(t, "block-tracking-url", ruleName)
+
+	// Pattern in both - should reject
+	rejected, _ = checkFilterRules("from@test.com", "to@test.com", "subject", "adnxs.com", "<a href='adnxs.com'>link</a>")
+	require.True(t, rejected)
+
+	// Pattern in neither - should not reject
+	rejected, _ = checkFilterRules("from@test.com", "to@test.com", "subject", "clean body", "<p>clean html</p>")
+	require.False(t, rejected)
+}
+
+func TestFilterRulesHtmlOnlyEmail(t *testing.T) {
+	// Test that URLs in HTML-only emails (where body might be empty) are caught
+	tmpfile, err := os.CreateTemp("", "filter_rules_html_only*.yaml")
+	require.NoError(t, err)
+	defer os.Remove(tmpfile.Name())
+
+	content := `rules:
+  - name: block-html-url
+    conditions:
+      - field: html
+        pattern: 'https?://[^\s"''<>]+\.(xyz|top|click)'
+    action: reject
+`
+	_, err = tmpfile.WriteString(content)
+	require.NoError(t, err)
+	tmpfile.Close()
+
+	err = loadFilterRules(tmpfile.Name())
+	require.NoError(t, err)
+
+	// URL only in HTML - should reject
+	rejected, _ := checkFilterRules("from@test.com", "to@test.com", "subject", "", "<a href='http://spam.xyz/click'>Click here</a>")
+	require.True(t, rejected)
+
+	// Clean HTML - should not reject
+	rejected, _ = checkFilterRules("from@test.com", "to@test.com", "subject", "", "<p>Hello world</p>")
+	require.False(t, rejected)
+}
+
+func TestFilterRulesFirstMatchWins(t *testing.T) {
+	tmpfile, err := os.CreateTemp("", "filter_rules_first_match*.yaml")
+	require.NoError(t, err)
+	defer os.Remove(tmpfile.Name())
+
+	content := `rules:
+  - name: first-rule
+    conditions:
+      - field: subject
+        pattern: 'test'
+    action: reject
+  - name: second-rule
+    conditions:
+      - field: subject
+        pattern: 'test subject'
+    action: reject
+`
+	_, err = tmpfile.WriteString(content)
+	require.NoError(t, err)
+	tmpfile.Close()
+
+	err = loadFilterRules(tmpfile.Name())
+	require.NoError(t, err)
+
+	// Both rules would match, but first wins
+	rejected, ruleName := checkFilterRules("from@test.com", "to@test.com", "test subject", "body", "")
+	require.True(t, rejected)
+	require.Equal(t, "first-rule", ruleName)
+}
+
+func TestFilterRulesNoRulesLoaded(t *testing.T) {
+	filterRules = nil
+
+	rejected, _ := checkFilterRules("any@email.com", "to@test.com", "any subject", "any body", "any html")
+	require.False(t, rejected)
+}
+
+func TestFilterRulesEmptyConditions(t *testing.T) {
+	tmpfile, err := os.CreateTemp("", "filter_rules_empty_conditions*.yaml")
+	require.NoError(t, err)
+	defer os.Remove(tmpfile.Name())
+
+	content := `rules:
+  - name: empty-rule
+    conditions: []
+    action: reject
+`
+	_, err = tmpfile.WriteString(content)
+	require.NoError(t, err)
+	tmpfile.Close()
+
+	err = loadFilterRules(tmpfile.Name())
+	require.NoError(t, err)
+
+	// Empty conditions should not match
+	rejected, _ := checkFilterRules("any@email.com", "to@test.com", "any subject", "any body", "")
+	require.False(t, rejected)
+}
+
+func TestSmtpStartWithNonExistentFilterRulesFile(t *testing.T) {
+	smtpConfig := makeSmtpConfig()
+	smtpConfig.filterRulesFile = "/non/existent/filter_rules.yaml"
+	telegramConfig := makeTelegramConfig()
+
+	_, err := SmtpStart(smtpConfig, telegramConfig)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed to load filter rules")
+}
+
+func TestFilteredEmailReturns554(t *testing.T) {
+	// Create a temporary filter rules file
+	tmpfile, err := os.CreateTemp("", "filter_smtp_test*.yaml")
+	require.NoError(t, err)
+	defer os.Remove(tmpfile.Name())
+
+	content := `rules:
+  - name: block-spam-subject
+    conditions:
+      - field: subject
+        pattern: '(?i)spam test'
+    action: reject
+`
+	_, err = tmpfile.WriteString(content)
+	require.NoError(t, err)
+	tmpfile.Close()
+
+	smtpConfig := makeSmtpConfig()
+	smtpConfig.filterRulesFile = tmpfile.Name()
+	telegramConfig := makeTelegramConfig()
+	d := startSmtp(smtpConfig, telegramConfig)
+	defer d.Shutdown()
+
+	// Test filtered email returns 554
+	m := gomail.NewMessage()
+	m.SetHeader("From", "from@test")
+	m.SetHeader("To", "to@test")
+	m.SetHeader("Subject", "SPAM TEST message")
+	m.SetBody("text/plain", "This is a test body")
+
+	di := gomail.NewPlainDialer(testSmtpListenHost, testSmtpListenPort, "", "")
+	err = di.DialAndSend(m)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "554")
+	require.Contains(t, err.Error(), "email rejected by filter rule")
+}
+
+func TestFilteredEmailWithBodyPattern(t *testing.T) {
+	// Create a temporary filter rules file
+	tmpfile, err := os.CreateTemp("", "filter_body_test*.yaml")
+	require.NoError(t, err)
+	defer os.Remove(tmpfile.Name())
+
+	content := `rules:
+  - name: block-tracking
+    conditions:
+      - field: body
+        pattern: 'adnxs\.com'
+    action: reject
+`
+	_, err = tmpfile.WriteString(content)
+	require.NoError(t, err)
+	tmpfile.Close()
+
+	smtpConfig := makeSmtpConfig()
+	smtpConfig.filterRulesFile = tmpfile.Name()
+	telegramConfig := makeTelegramConfig()
+	d := startSmtp(smtpConfig, telegramConfig)
+	defer d.Shutdown()
+
+	// Test filtered email returns 554
+	m := gomail.NewMessage()
+	m.SetHeader("From", "from@test")
+	m.SetHeader("To", "to@test")
+	m.SetHeader("Subject", "Normal subject")
+	m.SetBody("text/plain", "Click here: http://adnxs.com/track")
+
+	di := gomail.NewPlainDialer(testSmtpListenHost, testSmtpListenPort, "", "")
+	err = di.DialAndSend(m)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "554")
+	require.Contains(t, err.Error(), "email rejected by filter rule")
+}
+
+func TestNonFilteredEmailPasses(t *testing.T) {
+	// Create a temporary filter rules file
+	tmpfile, err := os.CreateTemp("", "filter_pass_test*.yaml")
+	require.NoError(t, err)
+	defer os.Remove(tmpfile.Name())
+
+	content := `rules:
+  - name: block-spam
+    conditions:
+      - field: subject
+        pattern: 'BLOCKED_PATTERN'
+    action: reject
+`
+	_, err = tmpfile.WriteString(content)
+	require.NoError(t, err)
+	tmpfile.Close()
+
+	smtpConfig := makeSmtpConfig()
+	smtpConfig.filterRulesFile = tmpfile.Name()
+	telegramConfig := makeTelegramConfig()
+	d := startSmtp(smtpConfig, telegramConfig)
+	defer d.Shutdown()
+
+	h := NewSuccessHandler()
+	s := HttpServer(h)
+	defer s.Shutdown(context.Background())
+
+	// Test non-filtered email passes through
+	m := gomail.NewMessage()
+	m.SetHeader("From", "from@test")
+	m.SetHeader("To", "to@test")
+	m.SetHeader("Subject", "Normal subject")
+	m.SetBody("text/plain", "Normal body")
+
+	di := gomail.NewPlainDialer(testSmtpListenHost, testSmtpListenPort, "", "")
+	err = di.DialAndSend(m)
+	require.NoError(t, err)
+
+	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIds, ",")))
+}
