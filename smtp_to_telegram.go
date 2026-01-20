@@ -44,7 +44,6 @@ type FilterRule struct {
 	Name       string            `yaml:"name"`
 	Match      string            `yaml:"match"` // "all" or "any"
 	Conditions []FilterCondition `yaml:"conditions"`
-	Action     string            `yaml:"action"`
 }
 
 type FilterConfig struct {
@@ -337,12 +336,7 @@ func checkFilterRules(from, to, subject, body, html string) (bool, string) {
 	}
 
 	for _, rule := range filterRules {
-		if rule.Action != "reject" {
-			continue
-		}
-
-		matched := evaluateRule(&rule, from, to, subject, body, html)
-		if matched {
+		if evaluateRule(&rule, from, to, subject, body, html) {
 			return true, rule.Name
 		}
 	}

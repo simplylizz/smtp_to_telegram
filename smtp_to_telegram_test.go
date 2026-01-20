@@ -766,13 +766,13 @@ func TestLoadFilterRules(t *testing.T) {
     conditions:
       - field: subject
         pattern: '(?i)spam'
-    action: reject
+
   - name: block-domain
     match: all
     conditions:
       - field: from
         pattern: '@spammer\.com$'
-    action: reject
+
 `
 	_, err = tmpfile.WriteString(content)
 	require.NoError(t, err)
@@ -808,7 +808,7 @@ func TestLoadFilterRulesInvalidRegex(t *testing.T) {
     conditions:
       - field: subject
         pattern: '[invalid('
-    action: reject
+
 `
 	_, err = tmpfile.WriteString(content)
 	require.NoError(t, err)
@@ -830,7 +830,7 @@ func TestLoadFilterRulesInvalidMatchType(t *testing.T) {
     conditions:
       - field: subject
         pattern: 'test'
-    action: reject
+
 `
 	_, err = tmpfile.WriteString(content)
 	require.NoError(t, err)
@@ -854,7 +854,7 @@ func TestFilterRulesMatchAll(t *testing.T) {
         pattern: '@ecinetworks\.com$'
       - field: subject
         pattern: '(?i)get(ting)? to know'
-    action: reject
+
 `
 	_, err = tmpfile.WriteString(content)
 	require.NoError(t, err)
@@ -896,7 +896,7 @@ func TestFilterRulesMatchAny(t *testing.T) {
         pattern: 'spam-tracker\.net'
       - field: body
         pattern: 'click-now\.xyz'
-    action: reject
+
 `
 	_, err = tmpfile.WriteString(content)
 	require.NoError(t, err)
@@ -933,27 +933,27 @@ func TestFilterRulesFieldMatching(t *testing.T) {
     conditions:
       - field: from
         pattern: 'blocked@'
-    action: reject
+
   - name: block-to
     conditions:
       - field: to
         pattern: 'blocked-recipient@'
-    action: reject
+
   - name: block-subject
     conditions:
       - field: subject
         pattern: 'BLOCKED_SUBJECT'
-    action: reject
+
   - name: block-body
     conditions:
       - field: body
         pattern: 'BLOCKED_BODY'
-    action: reject
+
   - name: block-html
     conditions:
       - field: html
         pattern: 'BLOCKED_HTML'
-    action: reject
+
 `
 	_, err = tmpfile.WriteString(content)
 	require.NoError(t, err)
@@ -1002,7 +1002,7 @@ func TestFilterRulesBodyOrHtml(t *testing.T) {
     conditions:
       - field: body_or_html
         pattern: 'adnxs\.com'
-    action: reject
+
 `
 	_, err = tmpfile.WriteString(content)
 	require.NoError(t, err)
@@ -1041,7 +1041,7 @@ func TestFilterRulesHtmlOnlyEmail(t *testing.T) {
     conditions:
       - field: html
         pattern: 'https?://[^\s"''<>]+\.(xyz|top|click)'
-    action: reject
+
 `
 	_, err = tmpfile.WriteString(content)
 	require.NoError(t, err)
@@ -1069,12 +1069,12 @@ func TestFilterRulesFirstMatchWins(t *testing.T) {
     conditions:
       - field: subject
         pattern: 'test'
-    action: reject
+
   - name: second-rule
     conditions:
       - field: subject
         pattern: 'test subject'
-    action: reject
+
 `
 	_, err = tmpfile.WriteString(content)
 	require.NoError(t, err)
@@ -1104,7 +1104,7 @@ func TestFilterRulesEmptyConditions(t *testing.T) {
 	content := `filter_rules:
   - name: empty-rule
     conditions: []
-    action: reject
+
 `
 	_, err = tmpfile.WriteString(content)
 	require.NoError(t, err)
@@ -1139,7 +1139,7 @@ func TestFilteredEmailReturns554(t *testing.T) {
     conditions:
       - field: subject
         pattern: '(?i)spam test'
-    action: reject
+
 `
 	_, err = tmpfile.WriteString(content)
 	require.NoError(t, err)
@@ -1176,7 +1176,7 @@ func TestFilteredEmailWithBodyPattern(t *testing.T) {
     conditions:
       - field: body
         pattern: 'adnxs\.com'
-    action: reject
+
 `
 	_, err = tmpfile.WriteString(content)
 	require.NoError(t, err)
@@ -1213,7 +1213,7 @@ func TestNonFilteredEmailPasses(t *testing.T) {
     conditions:
       - field: subject
         pattern: 'BLOCKED_PATTERN'
-    action: reject
+
 `
 	_, err = tmpfile.WriteString(content)
 	require.NoError(t, err)

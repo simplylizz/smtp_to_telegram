@@ -75,7 +75,7 @@ filter_rules:
     conditions:
       - field: body
         pattern: 'adnxs\.com'
-    action: reject
+
 
   # AND logic: ALL conditions must match (default)
   - name: block-dating-spam
@@ -85,7 +85,7 @@ filter_rules:
         pattern: '@ecinetworks\.com$'
       - field: subject
         pattern: '(?i)get(ting)? to know'
-    action: reject
+
 
   # OR logic: ANY condition matches
   - name: block-spam-domains
@@ -97,14 +97,14 @@ filter_rules:
         pattern: 'spam-tracker\.net'
       - field: body
         pattern: 'click-now\.xyz'
-    action: reject
+
 
   # Match URLs in HTML-only emails
   - name: block-html-tracking
     conditions:
       - field: body_or_html
         pattern: 'https?://[^\s]+\.(xyz|top|click)'
-    action: reject
+
 ```
 
 ### Rule Structure
@@ -114,7 +114,6 @@ filter_rules:
 | `name` | Rule identifier (used in logs) |
 | `match` | `all` (default) - all conditions must match; `any` - at least one condition must match |
 | `conditions` | List of conditions to evaluate |
-| `action` | Currently only `reject` is supported |
 
 ### Available Fields
 
@@ -131,5 +130,5 @@ filter_rules:
 
 1. Rules are loaded and regex patterns are compiled at startup (invalid patterns cause startup failure)
 2. After an email is parsed, each rule is evaluated in order
-3. First matching "reject" rule blocks the email with a 554 SMTP error
+3. First matching rule rejects the email with a 554 SMTP error
 4. If no rules match, the email is forwarded to Telegram
