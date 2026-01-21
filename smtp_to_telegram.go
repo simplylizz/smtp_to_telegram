@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -14,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -25,13 +25,30 @@ import (
 	"github.com/phires/go-guerrilla/log"
 	"github.com/phires/go-guerrilla/mail"
 	"github.com/urfave/cli/v2"
+	"gopkg.in/yaml.v3"
 )
 
 var (
-	Version   string = "UNKNOWN_RELEASE"
-	logger    log.Logger
-	blacklist map[string]bool
+	Version     string = "UNKNOWN_RELEASE"
+	logger      log.Logger
+	filterRules []FilterRule
 )
+
+type FilterCondition struct {
+	Field   string         `yaml:"field"`
+	Pattern string         `yaml:"pattern"`
+	regex   *regexp.Regexp // compiled pattern
+}
+
+type FilterRule struct {
+	Name       string            `yaml:"name"`
+	Match      string            `yaml:"match"` // "all" or "any"
+	Conditions []FilterCondition `yaml:"conditions"`
+}
+
+type FilterConfig struct {
+	FilterRules []FilterRule `yaml:"filter_rules"`
+}
 
 const (
 	BodyTruncated = "\n\n[truncated]"
@@ -42,7 +59,7 @@ type SmtpConfig struct {
 	smtpPrimaryHost     string
 	smtpMaxEnvelopeSize int64
 	smtpAllowedHosts    string
-	blacklistFile       string
+	configFile          string
 }
 
 type TelegramConfig struct {
@@ -68,7 +85,11 @@ type TelegramAPIMessage struct {
 }
 
 type FormattedEmail struct {
+	from        string
+	to          string
+	subject     string
 	text        string
+	html        string
 	attachments []*FormattedAttachment
 }
 
@@ -104,12 +125,18 @@ func main() {
 			fmt.Printf("%s\n", err)
 			os.Exit(1)
 		}
+		if ctx.String("blacklist-file") != "" {
+			fmt.Println("Error: --blacklist-file is deprecated and no longer supported.")
+			fmt.Println("Please use --config-file with filter_rules in YAML instead.")
+			fmt.Println("See README.md for configuration documentation.")
+			os.Exit(1)
+		}
 		smtpConfig := &SmtpConfig{
 			smtpListen:          ctx.String("smtp-listen"),
 			smtpPrimaryHost:     ctx.String("smtp-primary-host"),
 			smtpMaxEnvelopeSize: smtpMaxEnvelopeSize,
 			smtpAllowedHosts:    ctx.String("smtp-allowed-hosts"),
-			blacklistFile:       ctx.String("blacklist-file"),
+			configFile:          ctx.String("config-file"),
 		}
 		forwardedAttachmentMaxSize, err := units.FromHumanSize(ctx.String("forwarded-attachment-max-size"))
 		if err != nil {
@@ -166,8 +193,14 @@ func main() {
 		},
 		&cli.StringFlag{
 			Name:    "blacklist-file",
-			Usage:   "Path to a file containing blacklisted email addresses (one per line)",
+			Usage:   "DEPRECATED: Use --config-file instead",
 			EnvVars: []string{"ST_BLACKLIST_FILE"},
+			Hidden:  true,
+		},
+		&cli.StringFlag{
+			Name:    "config-file",
+			Usage:   "Path to YAML configuration file",
+			EnvVars: []string{"ST_CONFIG_FILE"},
 		},
 		&cli.StringFlag{
 			Name:     "telegram-chat-ids",
@@ -252,57 +285,122 @@ func getAllowedHosts(smtpConfig *SmtpConfig) []string {
 	return allowedHosts
 }
 
-func loadBlacklist(filename string) error {
-	blacklist = make(map[string]bool)
+func loadFilterRules(filename string) error {
+	filterRules = nil
 
 	if filename == "" {
 		return nil
 	}
 
-	file, err := os.Open(filename)
+	data, err := os.ReadFile(filename)
 	if err != nil {
-		return fmt.Errorf("failed to open blacklist file: %w", err)
+		return fmt.Errorf("failed to read config file: %w", err)
 	}
-	defer file.Close()
 
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		email := strings.TrimSpace(strings.ToLower(scanner.Text()))
-		if email != "" && !strings.HasPrefix(email, "#") {
-			blacklist[email] = true
+	var config FilterConfig
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return fmt.Errorf("failed to parse config YAML: %w", err)
+	}
+
+	validFields := map[string]bool{
+		"from": true, "to": true, "subject": true,
+		"body": true, "html": true, "body_or_html": true,
+	}
+
+	// Compile regex patterns
+	for i := range config.FilterRules {
+		rule := &config.FilterRules[i]
+		// Default match to "all" if not specified
+		if rule.Match == "" {
+			rule.Match = "all"
+		}
+		if rule.Match != "all" && rule.Match != "any" {
+			return fmt.Errorf("rule '%s': invalid match type '%s' (must be 'all' or 'any')", rule.Name, rule.Match)
+		}
+		for j := range rule.Conditions {
+			cond := &rule.Conditions[j]
+			if !validFields[cond.Field] {
+				return fmt.Errorf("rule '%s': invalid field '%s' (must be one of: from, to, subject, body, html, body_or_html)", rule.Name, cond.Field)
+			}
+			// Make pattern case-insensitive
+			pattern := cond.Pattern
+			if !strings.HasPrefix(pattern, "(?i)") {
+				pattern = "(?i)" + pattern
+			}
+			compiled, err := regexp.Compile(pattern)
+			if err != nil {
+				return fmt.Errorf("rule '%s': invalid regex pattern '%s': %w", rule.Name, cond.Pattern, err)
+			}
+			cond.regex = compiled
 		}
 	}
 
-	if err := scanner.Err(); err != nil {
-		return err
-	}
+	filterRules = config.FilterRules
 
 	if logger != nil {
-		logger.Infof("Loaded %d blacklisted emails/domains from %s", len(blacklist), filename)
+		logger.Infof("Loaded %d filter rules from %s", len(filterRules), filename)
 	}
 	return nil
 }
 
-func isBlacklisted(email string) bool {
-	if blacklist == nil {
-		return false
+func checkFilterRules(from, to, subject, body, html string) (bool, string) {
+	if filterRules == nil {
+		return false, ""
 	}
 
-	email = strings.ToLower(strings.TrimSpace(email))
-
-	if blacklist[email] {
-		return true
-	}
-
-	atIndex := strings.LastIndex(email, "@")
-	if atIndex != -1 && atIndex < len(email)-1 {
-		domain := email[atIndex+1:]
-		if blacklist[domain] {
-			return true
+	for _, rule := range filterRules {
+		if evaluateRule(&rule, from, to, subject, body, html) {
+			return true, rule.Name
 		}
 	}
 
-	return false
+	return false, ""
+}
+
+func evaluateRule(rule *FilterRule, from, to, subject, body, html string) bool {
+	if len(rule.Conditions) == 0 {
+		return false
+	}
+
+	if rule.Match == "any" {
+		// OR logic: at least one condition must match
+		for _, cond := range rule.Conditions {
+			if evaluateCondition(&cond, from, to, subject, body, html) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Default: "all" - AND logic: all conditions must match
+	for _, cond := range rule.Conditions {
+		if !evaluateCondition(&cond, from, to, subject, body, html) {
+			return false
+		}
+	}
+	return true
+}
+
+func evaluateCondition(cond *FilterCondition, from, to, subject, body, html string) bool {
+	var value string
+	switch cond.Field {
+	case "from":
+		value = from
+	case "to":
+		value = to
+	case "subject":
+		value = subject
+	case "body":
+		value = body
+	case "html":
+		value = html
+	case "body_or_html":
+		// Match if pattern found in either body OR html
+		return cond.regex.MatchString(body) || cond.regex.MatchString(html)
+	default:
+		return false
+	}
+	return cond.regex.MatchString(value)
 }
 
 func SmtpStart(
@@ -334,8 +432,8 @@ func SmtpStart(
 
 	logger = daemon.Log()
 
-	if err := loadBlacklist(smtpConfig.blacklistFile); err != nil {
-		return daemon, fmt.Errorf("failed to load blacklist: %w", err)
+	if err := loadFilterRules(smtpConfig.configFile); err != nil {
+		return daemon, fmt.Errorf("failed to load config: %w", err)
 	}
 
 	err := daemon.Start()
@@ -369,14 +467,14 @@ func SendEmailToTelegram(
 	envelope *mail.Envelope,
 	telegramConfig *TelegramConfig,
 ) error {
-	if isBlacklisted(envelope.MailFrom.String()) {
-		logger.Infof("Rejecting email from blacklisted sender: %s", envelope.MailFrom.String())
-		return fmt.Errorf("sender %s is blacklisted", envelope.MailFrom.String())
-	}
-
 	message, err := FormatEmail(envelope, telegramConfig)
 	if err != nil {
 		return err
+	}
+
+	if rejected, ruleName := checkFilterRules(message.from, message.to, message.subject, message.text, message.html); rejected {
+		logger.Infof("Rejecting email: matched filter rule '%s'", ruleName)
+		return fmt.Errorf("email rejected by filter rule: %s", ruleName)
 	}
 
 	client := http.Client{
@@ -595,17 +693,26 @@ func FormatEmail(envelope *mail.Envelope, telegramConfig *TelegramConfig) (*Form
 		)
 	}
 
+	from := envelope.MailFrom.String()
+	to := JoinEmailAddresses(envelope.RcptTo)
+	subject := env.GetHeader("subject")
+	html := env.HTML
+
 	fullMessageText, truncatedMessageText := FormatMessage(
-		envelope.MailFrom.String(),
-		JoinEmailAddresses(envelope.RcptTo),
-		env.GetHeader("subject"),
+		from,
+		to,
+		subject,
 		text,
 		formattedAttachmentsDetails,
 		telegramConfig,
 	)
 	if truncatedMessageText == "" { // no need to truncate
 		return &FormattedEmail{
+			from:        from,
+			to:          to,
+			subject:     subject,
 			text:        fullMessageText,
+			html:        html,
 			attachments: attachments,
 		}, nil
 	} else {
@@ -624,7 +731,11 @@ func FormatEmail(envelope *mail.Envelope, telegramConfig *TelegramConfig) (*Form
 		}
 		attachments := append([]*FormattedAttachment{at}, attachments...)
 		return &FormattedEmail{
+			from:        from,
+			to:          to,
+			subject:     subject,
 			text:        truncatedMessageText,
+			html:        html,
 			attachments: attachments,
 		}, nil
 	}
