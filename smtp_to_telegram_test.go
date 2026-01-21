@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -19,23 +20,24 @@ import (
 )
 
 var (
-	testSmtpListenHost   = "127.0.0.1"
-	testSmtpListenPort   = 22725
-	testHttpServerListen = "127.0.0.1:22780"
+	testSMTPListenHost     = "127.0.0.1"
+	testSMTPListenPort     = 22725
+	testHTTPServerListen   = "127.0.0.1:22780"
+	errTestUnexpectedValue = errors.New("unexpected value")
 )
 
-func makeSmtpConfig() *SmtpConfig {
-	return &SmtpConfig{
-		smtpListen:      fmt.Sprintf("%s:%d", testSmtpListenHost, testSmtpListenPort),
+func makeSMTPConfig() *SMTPConfig {
+	return &SMTPConfig{
+		smtpListen:      fmt.Sprintf("%s:%d", testSMTPListenHost, testSMTPListenPort),
 		smtpPrimaryHost: "testhost",
 	}
 }
 
 func makeTelegramConfig() *TelegramConfig {
 	return &TelegramConfig{
-		telegramChatIds:                  "42,142",
+		telegramChatIDs:                  "42,142",
 		telegramBotToken:                 "42:ZZZ",
-		telegramApiPrefix:                "http://" + testHttpServerListen + "/",
+		telegramAPIPrefix:                "http://" + testHTTPServerListen + "/",
 		messageTemplate:                  "From: {from}\\nTo: {to}\\nSubject: {subject}\\n\\n{body}\\n\\n{attachments_details}",
 		forwardedAttachmentMaxSize:       0,
 		forwardedAttachmentMaxPhotoSize:  0,
@@ -44,20 +46,20 @@ func makeTelegramConfig() *TelegramConfig {
 	}
 }
 
-func startSmtp(smtpConfig *SmtpConfig, telegramConfig *TelegramConfig) guerrilla.Daemon {
-	d, err := SmtpStart(smtpConfig, telegramConfig)
+func startSMTP(smtpConfig *SMTPConfig, telegramConfig *TelegramConfig) guerrilla.Daemon {
+	d, err := SMTPStart(smtpConfig, telegramConfig)
 	if err != nil {
 		panic(fmt.Sprintf("start error: %s", err))
 	}
-	waitSmtp(smtpConfig.smtpListen)
+	waitSMTP(smtpConfig.smtpListen)
 	return d
 }
 
-func waitSmtp(smtpHost string) {
-	for n := 0; n < 100; n++ {
+func waitSMTP(smtpHost string) {
+	for range 100 {
 		c, err := smtp.Dial(smtpHost)
 		if err == nil {
-			c.Close()
+			_ = c.Close()
 			break
 		}
 		time.Sleep(100 * time.Millisecond)
@@ -72,19 +74,19 @@ func goMailBody(content []byte) gomail.FileSetting {
 }
 
 func TestSuccess(t *testing.T) {
-	smtpConfig := makeSmtpConfig()
+	smtpConfig := makeSMTPConfig()
 	telegramConfig := makeTelegramConfig()
-	d := startSmtp(smtpConfig, telegramConfig)
+	d := startSMTP(smtpConfig, telegramConfig)
 	defer d.Shutdown()
 
 	h := NewSuccessHandler()
-	s := HttpServer(h)
-	defer s.Shutdown(context.Background())
+	s := HTTPServer(h)
+	defer func() { _ = s.Shutdown(context.Background()) }()
 
 	err := smtp.SendMail(smtpConfig.smtpListen, nil, "from@test", []string{"to@test"}, []byte(`hi`))
 	require.NoError(t, err)
 
-	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIds, ",")))
+	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIDs, ",")))
 	exp :=
 		"From: from@test\n" +
 			"To: to@test\n" +
@@ -96,21 +98,21 @@ func TestSuccess(t *testing.T) {
 }
 
 func TestSuccessCustomFormat(t *testing.T) {
-	smtpConfig := makeSmtpConfig()
+	smtpConfig := makeSMTPConfig()
 	telegramConfig := makeTelegramConfig()
 	telegramConfig.messageTemplate =
 		"Subject: {subject}\\n\\n{body}"
-	d := startSmtp(smtpConfig, telegramConfig)
+	d := startSMTP(smtpConfig, telegramConfig)
 	defer d.Shutdown()
 
 	h := NewSuccessHandler()
-	s := HttpServer(h)
-	defer s.Shutdown(context.Background())
+	s := HTTPServer(h)
+	defer func() { _ = s.Shutdown(context.Background()) }()
 
 	err := smtp.SendMail(smtpConfig.smtpListen, nil, "from@test", []string{"to@test"}, []byte(`hi`))
 	require.NoError(t, err)
 
-	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIds, ",")))
+	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIDs, ",")))
 	exp := "Subject: \n" +
 		"\n" +
 		"hi"
@@ -119,37 +121,37 @@ func TestSuccessCustomFormat(t *testing.T) {
 }
 
 func TestTelegramUnreachable(t *testing.T) {
-	smtpConfig := makeSmtpConfig()
+	smtpConfig := makeSMTPConfig()
 	telegramConfig := makeTelegramConfig()
-	d := startSmtp(smtpConfig, telegramConfig)
+	d := startSMTP(smtpConfig, telegramConfig)
 	defer d.Shutdown()
 
 	err := smtp.SendMail(smtpConfig.smtpListen, nil, "from@test", []string{"to@test"}, []byte(`hi`))
-	require.NotNil(t, err)
+	require.Error(t, err)
 }
 
 func TestTelegramHttpError(t *testing.T) {
-	smtpConfig := makeSmtpConfig()
+	smtpConfig := makeSMTPConfig()
 	telegramConfig := makeTelegramConfig()
-	d := startSmtp(smtpConfig, telegramConfig)
+	d := startSMTP(smtpConfig, telegramConfig)
 	defer d.Shutdown()
 
-	s := HttpServer(&ErrorHandler{})
-	defer s.Shutdown(context.Background())
+	s := HTTPServer(&ErrorHandler{})
+	defer func() { _ = s.Shutdown(context.Background()) }()
 
 	err := smtp.SendMail(smtpConfig.smtpListen, nil, "from@test", []string{"to@test"}, []byte(`hi`))
-	require.NotNil(t, err)
+	require.Error(t, err)
 }
 
 func TestEncodedContent(t *testing.T) {
-	smtpConfig := makeSmtpConfig()
+	smtpConfig := makeSMTPConfig()
 	telegramConfig := makeTelegramConfig()
-	d := startSmtp(smtpConfig, telegramConfig)
+	d := startSMTP(smtpConfig, telegramConfig)
 	defer d.Shutdown()
 
 	h := NewSuccessHandler()
-	s := HttpServer(h)
-	defer s.Shutdown(context.Background())
+	s := HTTPServer(h)
+	defer func() { _ = s.Shutdown(context.Background()) }()
 
 	b := []byte(
 		"Subject: =?UTF-8?B?8J+Yjg==?=\r\n" +
@@ -160,7 +162,7 @@ func TestEncodedContent(t *testing.T) {
 	err := smtp.SendMail(smtpConfig.smtpListen, nil, "from@test", []string{"to@test"}, b)
 	require.NoError(t, err)
 
-	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIds, ",")))
+	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIDs, ",")))
 	exp :=
 		"From: from@test\n" +
 			"To: to@test\n" +
@@ -171,14 +173,14 @@ func TestEncodedContent(t *testing.T) {
 }
 
 func TestHtmlAttachmentIsIgnored(t *testing.T) {
-	smtpConfig := makeSmtpConfig()
+	smtpConfig := makeSMTPConfig()
 	telegramConfig := makeTelegramConfig()
-	d := startSmtp(smtpConfig, telegramConfig)
+	d := startSMTP(smtpConfig, telegramConfig)
 	defer d.Shutdown()
 
 	h := NewSuccessHandler()
-	s := HttpServer(h)
-	defer s.Shutdown(context.Background())
+	s := HTTPServer(h)
+	defer func() { _ = s.Shutdown(context.Background()) }()
 
 	m := gomail.NewMessage()
 	m.SetHeader("From", "from@test")
@@ -187,11 +189,11 @@ func TestHtmlAttachmentIsIgnored(t *testing.T) {
 	m.SetBody("text/plain", "Text body")
 	m.AddAlternative("text/html", "<p>HTML body</p>")
 
-	di := gomail.NewPlainDialer(testSmtpListenHost, testSmtpListenPort, "", "")
+	di := gomail.NewDialer(testSMTPListenHost, testSMTPListenPort, "", "")
 	err := di.DialAndSend(m)
 	require.NoError(t, err)
 
-	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIds, ",")))
+	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIDs, ",")))
 	exp :=
 		"From: from@test\n" +
 			"To: to@test\n" +
@@ -202,14 +204,14 @@ func TestHtmlAttachmentIsIgnored(t *testing.T) {
 }
 
 func TestAttachmentsDetails(t *testing.T) {
-	smtpConfig := makeSmtpConfig()
+	smtpConfig := makeSMTPConfig()
 	telegramConfig := makeTelegramConfig()
-	d := startSmtp(smtpConfig, telegramConfig)
+	d := startSMTP(smtpConfig, telegramConfig)
 	defer d.Shutdown()
 
 	h := NewSuccessHandler()
-	s := HttpServer(h)
-	defer s.Shutdown(context.Background())
+	s := HTTPServer(h)
+	defer func() { _ = s.Shutdown(context.Background()) }()
 
 	m := gomail.NewMessage()
 	m.SetHeader("From", "from@test")
@@ -224,12 +226,12 @@ func TestAttachmentsDetails(t *testing.T) {
 	// attachment image
 	m.Attach("attachment.jpg", goMailBody([]byte("JPG")))
 
-	di := gomail.NewPlainDialer(testSmtpListenHost, testSmtpListenPort, "", "")
+	di := gomail.NewDialer(testSMTPListenHost, testSMTPListenPort, "", "")
 	err := di.DialAndSend(m)
 	require.NoError(t, err)
 
-	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIds, ",")))
-	require.Len(t, h.RequestDocuments, 0)
+	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIDs, ",")))
+	require.Empty(t, h.RequestDocuments)
 	exp :=
 		"From: from@test\n" +
 			"To: to@test\n" +
@@ -245,16 +247,16 @@ func TestAttachmentsDetails(t *testing.T) {
 }
 
 func TestAttachmentsSending(t *testing.T) {
-	smtpConfig := makeSmtpConfig()
+	smtpConfig := makeSMTPConfig()
 	telegramConfig := makeTelegramConfig()
 	telegramConfig.forwardedAttachmentMaxSize = 1024
 	telegramConfig.forwardedAttachmentMaxPhotoSize = 1024
-	d := startSmtp(smtpConfig, telegramConfig)
+	d := startSMTP(smtpConfig, telegramConfig)
 	defer d.Shutdown()
 
 	h := NewSuccessHandler()
-	s := HttpServer(h)
-	defer s.Shutdown(context.Background())
+	s := HTTPServer(h)
+	defer func() { _ = s.Shutdown(context.Background()) }()
 
 	m := gomail.NewMessage()
 	m.SetHeader("From", "from@test")
@@ -274,28 +276,28 @@ func TestAttachmentsSending(t *testing.T) {
 			filename: "inline.jpg",
 			caption:  "inline.jpg",
 			content:  []byte("JPG"),
-			fileType: ATTACHMENT_TYPE_PHOTO,
+			fileType: AttachmentTypePhoto,
 		},
 		{
 			filename: "hey.txt",
 			caption:  "hey.txt",
 			content:  []byte("hi"),
-			fileType: ATTACHMENT_TYPE_DOCUMENT,
+			fileType: AttachmentTypeDocument,
 		},
 		{
 			filename: "attachment.jpg",
 			caption:  "attachment.jpg",
 			content:  []byte("JPG"),
-			fileType: ATTACHMENT_TYPE_PHOTO,
+			fileType: AttachmentTypePhoto,
 		},
 	}
 
-	di := gomail.NewPlainDialer(testSmtpListenHost, testSmtpListenPort, "", "")
+	di := gomail.NewDialer(testSMTPListenHost, testSMTPListenPort, "", "")
 	err := di.DialAndSend(m)
 	require.NoError(t, err)
 
-	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIds, ",")))
-	require.Len(t, h.RequestDocuments, len(expFiles)*len(strings.Split(telegramConfig.telegramChatIds, ",")))
+	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIDs, ",")))
+	require.Len(t, h.RequestDocuments, len(expFiles)*len(strings.Split(telegramConfig.telegramChatIDs, ",")))
 	exp :=
 		"From: from@test\n" +
 			"To: to@test\n" +
@@ -314,17 +316,17 @@ func TestAttachmentsSending(t *testing.T) {
 }
 
 func TestLargeMessageAggressivelyTruncated(t *testing.T) {
-	smtpConfig := makeSmtpConfig()
+	smtpConfig := makeSMTPConfig()
 	telegramConfig := makeTelegramConfig()
 	telegramConfig.messageLengthToSendAsFile = 12
 	telegramConfig.forwardedAttachmentMaxSize = 1024
 	telegramConfig.forwardedAttachmentMaxPhotoSize = 1024
-	d := startSmtp(smtpConfig, telegramConfig)
+	d := startSMTP(smtpConfig, telegramConfig)
 	defer d.Shutdown()
 
 	h := NewSuccessHandler()
-	s := HttpServer(h)
-	defer s.Shutdown(context.Background())
+	s := HTTPServer(h)
+	defer func() { _ = s.Shutdown(context.Background()) }()
 
 	m := gomail.NewMessage()
 	m.SetHeader("From", "from@test")
@@ -343,16 +345,16 @@ func TestLargeMessageAggressivelyTruncated(t *testing.T) {
 			filename: "full_message.txt",
 			caption:  "Full message",
 			content:  []byte(expFull),
-			fileType: ATTACHMENT_TYPE_DOCUMENT,
+			fileType: AttachmentTypeDocument,
 		},
 	}
 
-	di := gomail.NewPlainDialer(testSmtpListenHost, testSmtpListenPort, "", "")
+	di := gomail.NewDialer(testSMTPListenHost, testSMTPListenPort, "", "")
 	err := di.DialAndSend(m)
 	require.NoError(t, err)
 
-	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIds, ",")))
-	require.Len(t, h.RequestDocuments, len(strings.Split(telegramConfig.telegramChatIds, ",")))
+	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIDs, ",")))
+	require.Len(t, h.RequestDocuments, len(strings.Split(telegramConfig.telegramChatIDs, ",")))
 
 	exp :=
 		"From: from@t"
@@ -363,17 +365,17 @@ func TestLargeMessageAggressivelyTruncated(t *testing.T) {
 }
 
 func TestLargeMessageProperlyTruncated(t *testing.T) {
-	smtpConfig := makeSmtpConfig()
+	smtpConfig := makeSMTPConfig()
 	telegramConfig := makeTelegramConfig()
 	telegramConfig.messageLengthToSendAsFile = 100
 	telegramConfig.forwardedAttachmentMaxSize = 1024
 	telegramConfig.forwardedAttachmentMaxPhotoSize = 1024
-	d := startSmtp(smtpConfig, telegramConfig)
+	d := startSMTP(smtpConfig, telegramConfig)
 	defer d.Shutdown()
 
 	h := NewSuccessHandler()
-	s := HttpServer(h)
-	defer s.Shutdown(context.Background())
+	s := HTTPServer(h)
+	defer func() { _ = s.Shutdown(context.Background()) }()
 
 	m := gomail.NewMessage()
 	m.SetHeader("From", "from@test")
@@ -392,16 +394,16 @@ func TestLargeMessageProperlyTruncated(t *testing.T) {
 			filename: "full_message.txt",
 			caption:  "Full message",
 			content:  []byte(expFull),
-			fileType: ATTACHMENT_TYPE_DOCUMENT,
+			fileType: AttachmentTypeDocument,
 		},
 	}
 
-	di := gomail.NewPlainDialer(testSmtpListenHost, testSmtpListenPort, "", "")
+	di := gomail.NewDialer(testSMTPListenHost, testSMTPListenPort, "", "")
 	err := di.DialAndSend(m)
 	require.NoError(t, err)
 
-	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIds, ",")))
-	require.Len(t, h.RequestDocuments, len(strings.Split(telegramConfig.telegramChatIds, ",")))
+	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIDs, ",")))
+	require.Len(t, h.RequestDocuments, len(strings.Split(telegramConfig.telegramChatIDs, ",")))
 
 	exp :=
 		"From: from@test\n" +
@@ -418,17 +420,17 @@ func TestLargeMessageProperlyTruncated(t *testing.T) {
 }
 
 func TestLargeMessageWithAttachmentsProperlyTruncated(t *testing.T) {
-	smtpConfig := makeSmtpConfig()
+	smtpConfig := makeSMTPConfig()
 	telegramConfig := makeTelegramConfig()
 	telegramConfig.messageLengthToSendAsFile = 150
 	telegramConfig.forwardedAttachmentMaxSize = 1024
 	telegramConfig.forwardedAttachmentMaxPhotoSize = 1024
-	d := startSmtp(smtpConfig, telegramConfig)
+	d := startSMTP(smtpConfig, telegramConfig)
 	defer d.Shutdown()
 
 	h := NewSuccessHandler()
-	s := HttpServer(h)
-	defer s.Shutdown(context.Background())
+	s := HTTPServer(h)
+	defer func() { _ = s.Shutdown(context.Background()) }()
 
 	m := gomail.NewMessage()
 	m.SetHeader("From", "from@test")
@@ -452,22 +454,22 @@ func TestLargeMessageWithAttachmentsProperlyTruncated(t *testing.T) {
 			filename: "full_message.txt",
 			caption:  "Full message",
 			content:  []byte(expFull),
-			fileType: ATTACHMENT_TYPE_DOCUMENT,
+			fileType: AttachmentTypeDocument,
 		},
 		{
 			filename: "attachment.jpg",
 			caption:  "attachment.jpg",
 			content:  []byte("JPG"),
-			fileType: ATTACHMENT_TYPE_PHOTO,
+			fileType: AttachmentTypePhoto,
 		},
 	}
 
-	di := gomail.NewPlainDialer(testSmtpListenHost, testSmtpListenPort, "", "")
+	di := gomail.NewDialer(testSMTPListenHost, testSMTPListenPort, "", "")
 	err := di.DialAndSend(m)
 	require.NoError(t, err)
 
-	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIds, ",")))
-	require.Len(t, h.RequestDocuments, 2*len(strings.Split(telegramConfig.telegramChatIds, ",")))
+	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIDs, ",")))
+	require.Len(t, h.RequestDocuments, 2*len(strings.Split(telegramConfig.telegramChatIDs, ",")))
 
 	exp :=
 		"From: from@test\n" +
@@ -487,16 +489,16 @@ func TestLargeMessageWithAttachmentsProperlyTruncated(t *testing.T) {
 }
 
 func TestMuttMessagePlaintextParsing(t *testing.T) {
-	smtpConfig := makeSmtpConfig()
+	smtpConfig := makeSMTPConfig()
 	telegramConfig := makeTelegramConfig()
 	telegramConfig.forwardedAttachmentMaxSize = 1024
 	telegramConfig.forwardedAttachmentMaxPhotoSize = 1024
-	d := startSmtp(smtpConfig, telegramConfig)
+	d := startSMTP(smtpConfig, telegramConfig)
 	defer d.Shutdown()
 
 	h := NewSuccessHandler()
-	s := HttpServer(h)
-	defer s.Shutdown(context.Background())
+	s := HTTPServer(h)
+	defer func() { _ = s.Shutdown(context.Background()) }()
 
 	// date | mutt -s "test" -a ./tt -- to@test
 	m := `Received: from USER by HOST with local (Exim 4.92)
@@ -534,19 +536,19 @@ hoho
 			filename: "tt",
 			caption:  "tt",
 			content:  []byte("hoho\n"),
-			fileType: ATTACHMENT_TYPE_DOCUMENT,
+			fileType: AttachmentTypeDocument,
 		},
 	}
 
-	di := gomail.NewPlainDialer(testSmtpListenHost, testSmtpListenPort, "", "")
+	di := gomail.NewDialer(testSMTPListenHost, testSMTPListenPort, "", "")
 	ds, err := di.Dial()
 	require.NoError(t, err)
-	defer ds.Close()
+	defer func() { _ = ds.Close() }()
 	err = ds.Send("from@test", []string{"to@test"}, bytes.NewBufferString(m))
 	require.NoError(t, err)
 
-	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIds, ",")))
-	require.Len(t, h.RequestDocuments, len(expFiles)*len(strings.Split(telegramConfig.telegramChatIds, ",")))
+	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIDs, ",")))
+	require.Len(t, h.RequestDocuments, len(expFiles)*len(strings.Split(telegramConfig.telegramChatIDs, ",")))
 	exp :=
 		"From: from@test\n" +
 			"To: to@test\n" +
@@ -563,16 +565,16 @@ hoho
 }
 
 func TestMailxMessagePlaintextParsing(t *testing.T) {
-	smtpConfig := makeSmtpConfig()
+	smtpConfig := makeSMTPConfig()
 	telegramConfig := makeTelegramConfig()
 	telegramConfig.forwardedAttachmentMaxSize = 1024
 	telegramConfig.forwardedAttachmentMaxPhotoSize = 1024
-	d := startSmtp(smtpConfig, telegramConfig)
+	d := startSMTP(smtpConfig, telegramConfig)
 	defer d.Shutdown()
 
 	h := NewSuccessHandler()
-	s := HttpServer(h)
-	defer s.Shutdown(context.Background())
+	s := HTTPServer(h)
+	defer func() { _ = s.Shutdown(context.Background()) }()
 
 	// date | mail -A ./tt -s "test" to@test
 	m := `Received: from USER by HOST with local (Exim 4.92)
@@ -611,19 +613,19 @@ aG9obwo=
 			filename: "tt",
 			caption:  "./tt",
 			content:  []byte("hoho\n"),
-			fileType: ATTACHMENT_TYPE_DOCUMENT,
+			fileType: AttachmentTypeDocument,
 		},
 	}
 
-	di := gomail.NewPlainDialer(testSmtpListenHost, testSmtpListenPort, "", "")
+	di := gomail.NewDialer(testSMTPListenHost, testSMTPListenPort, "", "")
 	ds, err := di.Dial()
 	require.NoError(t, err)
-	defer ds.Close()
+	defer func() { _ = ds.Close() }()
 	err = ds.Send("from@test", []string{"to@test"}, bytes.NewBufferString(m))
 	require.NoError(t, err)
 
-	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIds, ",")))
-	require.Len(t, h.RequestDocuments, len(expFiles)*len(strings.Split(telegramConfig.telegramChatIds, ",")))
+	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIDs, ",")))
+	require.Len(t, h.RequestDocuments, len(expFiles)*len(strings.Split(telegramConfig.telegramChatIDs, ",")))
 	exp :=
 		"From: from@test\n" +
 			"To: to@test\n" +
@@ -640,14 +642,14 @@ aG9obwo=
 }
 
 func TestLatin1Encoding(t *testing.T) {
-	smtpConfig := makeSmtpConfig()
+	smtpConfig := makeSMTPConfig()
 	telegramConfig := makeTelegramConfig()
-	d := startSmtp(smtpConfig, telegramConfig)
+	d := startSMTP(smtpConfig, telegramConfig)
 	defer d.Shutdown()
 
 	h := NewSuccessHandler()
-	s := HttpServer(h)
-	defer s.Shutdown(context.Background())
+	s := HTTPServer(h)
+	defer func() { _ = s.Shutdown(context.Background()) }()
 
 	// https://github.com/KostyaEsmukov/smtp_to_telegram/issues/24#issuecomment-980684254
 	m := `Date: Sat, 27 Nov 2021 17:31:21 +0100
@@ -663,7 +665,7 @@ QW5uYS1W6XJvbmlxdWUK
 	err := smtp.SendMail(smtpConfig.smtpListen, nil, "from@test", []string{"to@test"}, []byte(m))
 	require.NoError(t, err)
 
-	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIds, ",")))
+	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIDs, ",")))
 	exp :=
 		"From: from@test\n" +
 			"To: to@test\n" +
@@ -673,8 +675,8 @@ QW5uYS1W6XJvbmlxdWUK
 	require.Equal(t, exp, h.RequestMessages[0])
 }
 
-func HttpServer(handler http.Handler) *http.Server {
-	h := &http.Server{Addr: testHttpServerListen, Handler: handler}
+func HTTPServer(handler http.Handler) *http.Server {
+	h := &http.Server{Addr: testHTTPServerListen, Handler: handler}
 	ln, err := net.Listen("tcp", h.Addr)
 	if err != nil {
 		panic(err)
@@ -701,9 +703,10 @@ func NewSuccessHandler() *SuccessHandler {
 
 func (s *SuccessHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if strings.Contains(r.URL.Path, "sendMessage") {
-		w.Write([]byte(`{"ok":true,"result":{"message_id": 123123}}`))
-		err := r.ParseForm()
-		if err != nil {
+		if _, err := w.Write([]byte(`{"ok":true,"result":{"message_id": 123123}}`)); err != nil {
+			panic(fmt.Errorf("failed to write response: %w", err))
+		}
+		if err := r.ParseForm(); err != nil {
 			panic(err)
 		}
 		s.RequestMessages = append(s.RequestMessages, r.PostForm.Get("text"))
@@ -712,27 +715,34 @@ func (s *SuccessHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	isSendDocument := strings.Contains(r.URL.Path, "sendDocument")
 	isSendPhoto := strings.Contains(r.URL.Path, "sendPhoto")
 	if isSendDocument || isSendPhoto {
-		w.Write([]byte(`{}`))
-		if r.FormValue("reply_to_message_id") != "123123" {
-			panic(fmt.Errorf("Unexpected reply_to_message_id: %s", r.FormValue("reply_to_message_id")))
+		if _, err := w.Write([]byte(`{}`)); err != nil {
+			panic(fmt.Errorf("failed to write response: %w", err))
 		}
-		err := r.ParseMultipartForm(1024 * 1024)
-		if err != nil {
+		if r.FormValue("reply_to_message_id") != "123123" {
+			panic(fmt.Errorf("%w: unexpected reply_to_message_id: %s", errTestUnexpectedValue, r.FormValue("reply_to_message_id")))
+		}
+		if err := r.ParseMultipartForm(1024 * 1024); err != nil {
 			panic(err)
 		}
 		key := "document"
-		fileType := ATTACHMENT_TYPE_DOCUMENT
+		fileType := AttachmentTypeDocument
 		if isSendPhoto {
 			key = "photo"
-			fileType = ATTACHMENT_TYPE_PHOTO
+			fileType = AttachmentTypePhoto
 		}
 		file, header, err := r.FormFile(key)
 		if err != nil {
 			panic(err)
 		}
-		defer file.Close()
+		defer func() {
+			if err := file.Close(); err != nil {
+				panic(fmt.Errorf("failed to close file: %w", err))
+			}
+		}()
 		var buf bytes.Buffer
-		io.Copy(&buf, file)
+		if _, err := io.Copy(&buf, file); err != nil {
+			panic(fmt.Errorf("failed to copy file content: %w", err))
+		}
 		s.RequestDocuments = append(
 			s.RequestDocuments,
 			&FormattedAttachment{
@@ -744,22 +754,26 @@ func (s *SuccessHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		)
 	} else {
 		w.WriteHeader(404)
-		w.Write([]byte("Error"))
+		if _, err := w.Write([]byte("Error")); err != nil {
+			panic(fmt.Errorf("failed to write error response: %w", err))
+		}
 	}
 }
 
 type ErrorHandler struct{}
 
-func (s *ErrorHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (s *ErrorHandler) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(400)
-	w.Write([]byte("Error"))
+	if _, err := w.Write([]byte("Error")); err != nil {
+		panic(fmt.Errorf("failed to write error response: %w", err))
+	}
 }
 
 func TestLoadFilterRules(t *testing.T) {
 	// Create a temporary filter rules file
 	tmpfile, err := os.CreateTemp("", "filter_rules_test*.yaml")
 	require.NoError(t, err)
-	defer os.Remove(tmpfile.Name())
+	defer func() { _ = os.Remove(tmpfile.Name()) }()
 
 	content := `filter_rules:
   - name: block-spam
@@ -776,7 +790,7 @@ func TestLoadFilterRules(t *testing.T) {
 `
 	_, err = tmpfile.WriteString(content)
 	require.NoError(t, err)
-	tmpfile.Close()
+	require.NoError(t, tmpfile.Close())
 
 	err = loadFilterRules(tmpfile.Name())
 	require.NoError(t, err)
@@ -801,7 +815,7 @@ func TestLoadFilterRulesNonExistentFile(t *testing.T) {
 func TestLoadFilterRulesInvalidRegex(t *testing.T) {
 	tmpfile, err := os.CreateTemp("", "filter_rules_invalid*.yaml")
 	require.NoError(t, err)
-	defer os.Remove(tmpfile.Name())
+	defer func() { _ = os.Remove(tmpfile.Name()) }()
 
 	content := `filter_rules:
   - name: bad-regex
@@ -812,7 +826,7 @@ func TestLoadFilterRulesInvalidRegex(t *testing.T) {
 `
 	_, err = tmpfile.WriteString(content)
 	require.NoError(t, err)
-	tmpfile.Close()
+	require.NoError(t, tmpfile.Close())
 
 	err = loadFilterRules(tmpfile.Name())
 	require.Error(t, err)
@@ -822,7 +836,7 @@ func TestLoadFilterRulesInvalidRegex(t *testing.T) {
 func TestLoadFilterRulesInvalidField(t *testing.T) {
 	tmpfile, err := os.CreateTemp("", "filter_rules_invalid_field*.yaml")
 	require.NoError(t, err)
-	defer os.Remove(tmpfile.Name())
+	defer func() { _ = os.Remove(tmpfile.Name()) }()
 
 	content := `filter_rules:
   - name: bad-field
@@ -833,7 +847,7 @@ func TestLoadFilterRulesInvalidField(t *testing.T) {
 `
 	_, err = tmpfile.WriteString(content)
 	require.NoError(t, err)
-	tmpfile.Close()
+	require.NoError(t, tmpfile.Close())
 
 	err = loadFilterRules(tmpfile.Name())
 	require.Error(t, err)
@@ -843,7 +857,7 @@ func TestLoadFilterRulesInvalidField(t *testing.T) {
 func TestLoadFilterRulesInvalidMatchType(t *testing.T) {
 	tmpfile, err := os.CreateTemp("", "filter_rules_invalid_match*.yaml")
 	require.NoError(t, err)
-	defer os.Remove(tmpfile.Name())
+	defer func() { _ = os.Remove(tmpfile.Name()) }()
 
 	content := `filter_rules:
   - name: bad-match
@@ -855,7 +869,7 @@ func TestLoadFilterRulesInvalidMatchType(t *testing.T) {
 `
 	_, err = tmpfile.WriteString(content)
 	require.NoError(t, err)
-	tmpfile.Close()
+	require.NoError(t, tmpfile.Close())
 
 	err = loadFilterRules(tmpfile.Name())
 	require.Error(t, err)
@@ -865,7 +879,7 @@ func TestLoadFilterRulesInvalidMatchType(t *testing.T) {
 func TestFilterRulesMatchAll(t *testing.T) {
 	tmpfile, err := os.CreateTemp("", "filter_rules_match_all*.yaml")
 	require.NoError(t, err)
-	defer os.Remove(tmpfile.Name())
+	defer func() { _ = os.Remove(tmpfile.Name()) }()
 
 	content := `filter_rules:
   - name: block-dating-spam
@@ -879,7 +893,7 @@ func TestFilterRulesMatchAll(t *testing.T) {
 `
 	_, err = tmpfile.WriteString(content)
 	require.NoError(t, err)
-	tmpfile.Close()
+	require.NoError(t, tmpfile.Close())
 
 	err = loadFilterRules(tmpfile.Name())
 	require.NoError(t, err)
@@ -905,7 +919,7 @@ func TestFilterRulesMatchAll(t *testing.T) {
 func TestFilterRulesMatchAny(t *testing.T) {
 	tmpfile, err := os.CreateTemp("", "filter_rules_match_any*.yaml")
 	require.NoError(t, err)
-	defer os.Remove(tmpfile.Name())
+	defer func() { _ = os.Remove(tmpfile.Name()) }()
 
 	content := `filter_rules:
   - name: block-spam-domains
@@ -921,7 +935,7 @@ func TestFilterRulesMatchAny(t *testing.T) {
 `
 	_, err = tmpfile.WriteString(content)
 	require.NoError(t, err)
-	tmpfile.Close()
+	require.NoError(t, tmpfile.Close())
 
 	err = loadFilterRules(tmpfile.Name())
 	require.NoError(t, err)
@@ -947,7 +961,7 @@ func TestFilterRulesMatchAny(t *testing.T) {
 func TestFilterRulesFieldMatching(t *testing.T) {
 	tmpfile, err := os.CreateTemp("", "filter_rules_fields*.yaml")
 	require.NoError(t, err)
-	defer os.Remove(tmpfile.Name())
+	defer func() { _ = os.Remove(tmpfile.Name()) }()
 
 	content := `filter_rules:
   - name: block-from
@@ -978,7 +992,7 @@ func TestFilterRulesFieldMatching(t *testing.T) {
 `
 	_, err = tmpfile.WriteString(content)
 	require.NoError(t, err)
-	tmpfile.Close()
+	require.NoError(t, tmpfile.Close())
 
 	err = loadFilterRules(tmpfile.Name())
 	require.NoError(t, err)
@@ -1016,7 +1030,7 @@ func TestFilterRulesFieldMatching(t *testing.T) {
 func TestFilterRulesBodyOrHtml(t *testing.T) {
 	tmpfile, err := os.CreateTemp("", "filter_rules_body_or_html*.yaml")
 	require.NoError(t, err)
-	defer os.Remove(tmpfile.Name())
+	defer func() { _ = os.Remove(tmpfile.Name()) }()
 
 	content := `filter_rules:
   - name: block-tracking-url
@@ -1027,7 +1041,7 @@ func TestFilterRulesBodyOrHtml(t *testing.T) {
 `
 	_, err = tmpfile.WriteString(content)
 	require.NoError(t, err)
-	tmpfile.Close()
+	require.NoError(t, tmpfile.Close())
 
 	err = loadFilterRules(tmpfile.Name())
 	require.NoError(t, err)
@@ -1055,7 +1069,7 @@ func TestFilterRulesHtmlOnlyEmail(t *testing.T) {
 	// Test that URLs in HTML-only emails (where body might be empty) are caught
 	tmpfile, err := os.CreateTemp("", "filter_rules_html_only*.yaml")
 	require.NoError(t, err)
-	defer os.Remove(tmpfile.Name())
+	defer func() { _ = os.Remove(tmpfile.Name()) }()
 
 	content := `filter_rules:
   - name: block-html-url
@@ -1066,7 +1080,7 @@ func TestFilterRulesHtmlOnlyEmail(t *testing.T) {
 `
 	_, err = tmpfile.WriteString(content)
 	require.NoError(t, err)
-	tmpfile.Close()
+	require.NoError(t, tmpfile.Close())
 
 	err = loadFilterRules(tmpfile.Name())
 	require.NoError(t, err)
@@ -1083,7 +1097,7 @@ func TestFilterRulesHtmlOnlyEmail(t *testing.T) {
 func TestFilterRulesFirstMatchWins(t *testing.T) {
 	tmpfile, err := os.CreateTemp("", "filter_rules_first_match*.yaml")
 	require.NoError(t, err)
-	defer os.Remove(tmpfile.Name())
+	defer func() { _ = os.Remove(tmpfile.Name()) }()
 
 	content := `filter_rules:
   - name: first-rule
@@ -1099,7 +1113,7 @@ func TestFilterRulesFirstMatchWins(t *testing.T) {
 `
 	_, err = tmpfile.WriteString(content)
 	require.NoError(t, err)
-	tmpfile.Close()
+	require.NoError(t, tmpfile.Close())
 
 	err = loadFilterRules(tmpfile.Name())
 	require.NoError(t, err)
@@ -1113,7 +1127,7 @@ func TestFilterRulesFirstMatchWins(t *testing.T) {
 func TestFilterRulesCaseInsensitive(t *testing.T) {
 	tmpfile, err := os.CreateTemp("", "filter_rules_case_insensitive*.yaml")
 	require.NoError(t, err)
-	defer os.Remove(tmpfile.Name())
+	defer func() { _ = os.Remove(tmpfile.Name()) }()
 
 	content := `filter_rules:
   - name: block-spam
@@ -1124,7 +1138,7 @@ func TestFilterRulesCaseInsensitive(t *testing.T) {
 `
 	_, err = tmpfile.WriteString(content)
 	require.NoError(t, err)
-	tmpfile.Close()
+	require.NoError(t, tmpfile.Close())
 
 	err = loadFilterRules(tmpfile.Name())
 	require.NoError(t, err)
@@ -1152,7 +1166,7 @@ func TestFilterRulesNoRulesLoaded(t *testing.T) {
 func TestFilterRulesEmptyConditions(t *testing.T) {
 	tmpfile, err := os.CreateTemp("", "filter_rules_empty_conditions*.yaml")
 	require.NoError(t, err)
-	defer os.Remove(tmpfile.Name())
+	defer func() { _ = os.Remove(tmpfile.Name()) }()
 
 	content := `filter_rules:
   - name: empty-rule
@@ -1161,7 +1175,7 @@ func TestFilterRulesEmptyConditions(t *testing.T) {
 `
 	_, err = tmpfile.WriteString(content)
 	require.NoError(t, err)
-	tmpfile.Close()
+	require.NoError(t, tmpfile.Close())
 
 	err = loadFilterRules(tmpfile.Name())
 	require.NoError(t, err)
@@ -1171,12 +1185,12 @@ func TestFilterRulesEmptyConditions(t *testing.T) {
 	require.False(t, rejected)
 }
 
-func TestSmtpStartWithNonExistentFilterRulesFile(t *testing.T) {
-	smtpConfig := makeSmtpConfig()
+func TestSMTPStartWithNonExistentFilterRulesFile(t *testing.T) {
+	smtpConfig := makeSMTPConfig()
 	smtpConfig.configFile = "/non/existent/filter_rules.yaml"
 	telegramConfig := makeTelegramConfig()
 
-	_, err := SmtpStart(smtpConfig, telegramConfig)
+	_, err := SMTPStart(smtpConfig, telegramConfig)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to load config")
 }
@@ -1185,7 +1199,7 @@ func TestFilteredEmailReturns554(t *testing.T) {
 	// Create a temporary filter rules file
 	tmpfile, err := os.CreateTemp("", "filter_smtp_test*.yaml")
 	require.NoError(t, err)
-	defer os.Remove(tmpfile.Name())
+	defer func() { _ = os.Remove(tmpfile.Name()) }()
 
 	content := `filter_rules:
   - name: block-spam-subject
@@ -1196,12 +1210,12 @@ func TestFilteredEmailReturns554(t *testing.T) {
 `
 	_, err = tmpfile.WriteString(content)
 	require.NoError(t, err)
-	tmpfile.Close()
+	require.NoError(t, tmpfile.Close())
 
-	smtpConfig := makeSmtpConfig()
+	smtpConfig := makeSMTPConfig()
 	smtpConfig.configFile = tmpfile.Name()
 	telegramConfig := makeTelegramConfig()
-	d := startSmtp(smtpConfig, telegramConfig)
+	d := startSMTP(smtpConfig, telegramConfig)
 	defer d.Shutdown()
 
 	// Test filtered email returns 554 (case-insensitive)
@@ -1211,7 +1225,7 @@ func TestFilteredEmailReturns554(t *testing.T) {
 	m.SetHeader("Subject", "SPAM TEST message")
 	m.SetBody("text/plain", "This is a test body")
 
-	di := gomail.NewPlainDialer(testSmtpListenHost, testSmtpListenPort, "", "")
+	di := gomail.NewDialer(testSMTPListenHost, testSMTPListenPort, "", "")
 	err = di.DialAndSend(m)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "554")
@@ -1222,7 +1236,7 @@ func TestFilteredEmailWithBodyPattern(t *testing.T) {
 	// Create a temporary filter rules file
 	tmpfile, err := os.CreateTemp("", "filter_body_test*.yaml")
 	require.NoError(t, err)
-	defer os.Remove(tmpfile.Name())
+	defer func() { _ = os.Remove(tmpfile.Name()) }()
 
 	content := `filter_rules:
   - name: block-tracking
@@ -1233,12 +1247,12 @@ func TestFilteredEmailWithBodyPattern(t *testing.T) {
 `
 	_, err = tmpfile.WriteString(content)
 	require.NoError(t, err)
-	tmpfile.Close()
+	require.NoError(t, tmpfile.Close())
 
-	smtpConfig := makeSmtpConfig()
+	smtpConfig := makeSMTPConfig()
 	smtpConfig.configFile = tmpfile.Name()
 	telegramConfig := makeTelegramConfig()
-	d := startSmtp(smtpConfig, telegramConfig)
+	d := startSMTP(smtpConfig, telegramConfig)
 	defer d.Shutdown()
 
 	// Test filtered email returns 554
@@ -1248,7 +1262,7 @@ func TestFilteredEmailWithBodyPattern(t *testing.T) {
 	m.SetHeader("Subject", "Normal subject")
 	m.SetBody("text/plain", "Click here: http://adnxs.com/track")
 
-	di := gomail.NewPlainDialer(testSmtpListenHost, testSmtpListenPort, "", "")
+	di := gomail.NewDialer(testSMTPListenHost, testSMTPListenPort, "", "")
 	err = di.DialAndSend(m)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "554")
@@ -1259,7 +1273,7 @@ func TestNonFilteredEmailPasses(t *testing.T) {
 	// Create a temporary filter rules file
 	tmpfile, err := os.CreateTemp("", "filter_pass_test*.yaml")
 	require.NoError(t, err)
-	defer os.Remove(tmpfile.Name())
+	defer func() { _ = os.Remove(tmpfile.Name()) }()
 
 	content := `filter_rules:
   - name: block-spam
@@ -1270,17 +1284,17 @@ func TestNonFilteredEmailPasses(t *testing.T) {
 `
 	_, err = tmpfile.WriteString(content)
 	require.NoError(t, err)
-	tmpfile.Close()
+	require.NoError(t, tmpfile.Close())
 
-	smtpConfig := makeSmtpConfig()
+	smtpConfig := makeSMTPConfig()
 	smtpConfig.configFile = tmpfile.Name()
 	telegramConfig := makeTelegramConfig()
-	d := startSmtp(smtpConfig, telegramConfig)
+	d := startSMTP(smtpConfig, telegramConfig)
 	defer d.Shutdown()
 
 	h := NewSuccessHandler()
-	s := HttpServer(h)
-	defer s.Shutdown(context.Background())
+	s := HTTPServer(h)
+	defer func() { _ = s.Shutdown(context.Background()) }()
 
 	// Test non-filtered email passes through
 	m := gomail.NewMessage()
@@ -1289,9 +1303,9 @@ func TestNonFilteredEmailPasses(t *testing.T) {
 	m.SetHeader("Subject", "Normal subject")
 	m.SetBody("text/plain", "Normal body")
 
-	di := gomail.NewPlainDialer(testSmtpListenHost, testSmtpListenPort, "", "")
+	di := gomail.NewDialer(testSMTPListenHost, testSMTPListenPort, "", "")
 	err = di.DialAndSend(m)
 	require.NoError(t, err)
 
-	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIds, ",")))
+	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIDs, ",")))
 }
