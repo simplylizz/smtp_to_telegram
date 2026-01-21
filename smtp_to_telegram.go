@@ -135,7 +135,7 @@ func main() {
 		Usage: "A small program which listens for SMTP and sends " +
 			"all incoming Email messages to Telegram.",
 		Version: Version,
-		Action: func(_ context.Context, cmd *cli.Command) error {
+		Action: func(ctx context.Context, cmd *cli.Command) error {
 			smtpMaxEnvelopeSize, err := units.FromHumanSize(cmd.String("smtp-max-envelope-size"))
 			if err != nil {
 				fmt.Printf("%s\n", err)
@@ -179,8 +179,7 @@ func main() {
 			if err != nil {
 				panic(fmt.Sprintf("start error: %s", err))
 			}
-			sigHandler(&d)
-			return nil
+			return awaitShutdown(ctx, &d)
 		},
 		Flags: []cli.Flag{
 			&cli.StringFlag{
@@ -877,24 +876,29 @@ func panicIfError(err error) {
 	}
 }
 
-func sigHandler(d *guerrilla.Daemon) {
-	signalChannel := make(chan os.Signal, 1)
+func awaitShutdown(ctx context.Context, d *guerrilla.Daemon) error {
+	ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGINT)
+	defer stop()
 
-	signal.Notify(signalChannel,
-		syscall.SIGTERM,
-		syscall.SIGQUIT,
-		syscall.SIGINT,
-	)
-	for range signalChannel {
-		logger.Info("Shutdown signal caught")
-		go func() {
-			// exit if graceful shutdown not finished in 60 sec.
-			<-time.After(time.Second * 60)
-			logger.Error("graceful shutdown timed out")
-			os.Exit(1)
-		}()
+	<-ctx.Done()
+	logger.Info("Shutdown signal caught")
+
+	// Graceful shutdown with timeout
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
 		d.Shutdown()
+		close(done)
+	}()
+
+	select {
+	case <-done:
 		logger.Info("Shutdown completed, exiting.")
-		return
+		return nil
+	case <-shutdownCtx.Done():
+		logger.Error("graceful shutdown timed out")
+		return shutdownCtx.Err()
 	}
 }
