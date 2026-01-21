@@ -719,7 +719,7 @@ func (s *SuccessHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			panic(fmt.Errorf("failed to write response: %w", err))
 		}
 		if r.FormValue("reply_to_message_id") != "123123" {
-			panic(fmt.Errorf("unexpected reply_to_message_id: %w: %s", errTestUnexpectedValue, r.FormValue("reply_to_message_id")))
+			panic(fmt.Errorf("%w: unexpected reply_to_message_id: %s", errTestUnexpectedValue, r.FormValue("reply_to_message_id")))
 		}
 		if err := r.ParseMultipartForm(1024 * 1024); err != nil {
 			panic(err)

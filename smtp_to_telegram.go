@@ -557,12 +557,12 @@ func SendMessageToChat(
 
 	j, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", errReadingJSON, err)
+		return nil, fmt.Errorf("%w: %w", errReadingJSON, err)
 	}
 	result := &TelegramAPIMessageResult{}
 	err = json.Unmarshal(j, result)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", errParsingJSON, err)
+		return nil, fmt.Errorf("%w: %w", errParsingJSON, err)
 	}
 	if !result.Ok {
 		return nil, fmt.Errorf("%w: %s", errResponseNotOK, j)
@@ -646,7 +646,7 @@ func FormatEmail(envelope *mail.Envelope, telegramConfig *TelegramConfig) (*Form
 	reader := envelope.NewReader()
 	env, err := enmime.ReadEnvelope(reader)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w: %v", envelope, errEmailParsing, err)
+		return nil, fmt.Errorf("%s: %w: %w", envelope, errEmailParsing, err)
 	}
 	text := env.Text
 
