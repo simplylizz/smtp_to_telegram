@@ -30,7 +30,7 @@ import (
 )
 
 var (
-	Version = "UNKNOWN_RELEASE"
+	Version     = "UNKNOWN_RELEASE"
 	logger      log.Logger
 	filterRules []FilterRule
 

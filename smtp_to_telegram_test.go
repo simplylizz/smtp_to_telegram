@@ -20,10 +20,10 @@ import (
 )
 
 var (
-	testSMTPListenHost      = "127.0.0.1"
-	testSMTPListenPort      = 22725
-	testHTTPServerListen    = "127.0.0.1:22780"
-	errTestUnexpectedValue  = errors.New("unexpected value")
+	testSMTPListenHost     = "127.0.0.1"
+	testSMTPListenPort     = 22725
+	testHTTPServerListen   = "127.0.0.1:22780"
+	errTestUnexpectedValue = errors.New("unexpected value")
 )
 
 func makeSMTPConfig() *SMTPConfig {

@@ -20,6 +20,14 @@ jobs:
         with:
           go-version: "1.25"
 
+      - name: Check go fmt
+        run: |
+          if [ -n "$(gofmt -l .)" ]; then
+            echo "The following files are not formatted correctly:"
+            gofmt -l .
+            exit 1
+          fi
+
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v8
         with:
