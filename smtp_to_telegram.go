@@ -135,7 +135,7 @@ func main() {
 		Usage: "A small program which listens for SMTP and sends " +
 			"all incoming Email messages to Telegram.",
 		Version: Version,
-		Action: func(ctx context.Context, cmd *cli.Command) error {
+		Action: func(_ context.Context, cmd *cli.Command) error {
 			smtpMaxEnvelopeSize, err := units.FromHumanSize(cmd.String("smtp-max-envelope-size"))
 			if err != nil {
 				fmt.Printf("%s\n", err)
@@ -173,7 +173,7 @@ func main() {
 				forwardedAttachmentMaxSize:       int(forwardedAttachmentMaxSize),
 				forwardedAttachmentMaxPhotoSize:  int(forwardedAttachmentMaxPhotoSize),
 				forwardedAttachmentRespectErrors: cmd.Bool("forwarded-attachment-respect-errors"),
-				messageLengthToSendAsFile:        uint(cmd.Uint("message-length-to-send-as-file")),
+				messageLengthToSendAsFile:        cmd.Uint("message-length-to-send-as-file"),
 			}
 			d, err := SMTPStart(smtpConfig, telegramConfig)
 			if err != nil {
