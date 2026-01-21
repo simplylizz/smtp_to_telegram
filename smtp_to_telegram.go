@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,12 +21,12 @@ import (
 	"time"
 
 	"github.com/docker/go-units"
-	"github.com/jhillyerd/enmime"
+	"github.com/jhillyerd/enmime/v2"
 	"github.com/phires/go-guerrilla"
 	"github.com/phires/go-guerrilla/backends"
 	"github.com/phires/go-guerrilla/log"
 	"github.com/phires/go-guerrilla/mail"
-	"github.com/urfave/cli/v2"
+	"github.com/urfave/cli/v3"
 	"gopkg.in/yaml.v3"
 )
 
@@ -129,50 +130,50 @@ func GetHostname() string {
 }
 
 func main() {
-	app := cli.NewApp()
-	app.Name = "smtp_to_telegram"
-	app.Usage = "A small program which listens for SMTP and sends " +
-		"all incoming Email messages to Telegram."
-	app.Version = Version
-	app.Action = func(ctx *cli.Context) error {
-		smtpMaxEnvelopeSize, err := units.FromHumanSize(ctx.String("smtp-max-envelope-size"))
+	cmd := &cli.Command{
+		Name: "smtp_to_telegram",
+		Usage: "A small program which listens for SMTP and sends " +
+			"all incoming Email messages to Telegram.",
+		Version: Version,
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			smtpMaxEnvelopeSize, err := units.FromHumanSize(cmd.String("smtp-max-envelope-size"))
 		if err != nil {
 			fmt.Printf("%s\n", err)
 			os.Exit(1)
 		}
-		if ctx.String("blacklist-file") != "" {
+		if cmd.String("blacklist-file") != "" {
 			fmt.Println("Error: --blacklist-file is deprecated and no longer supported.")
 			fmt.Println("Please use --config-file with filter_rules in YAML instead.")
 			fmt.Println("See README.md for configuration documentation.")
 			os.Exit(1)
 		}
 		smtpConfig := &SMTPConfig{
-			smtpListen:          ctx.String("smtp-listen"),
-			smtpPrimaryHost:     ctx.String("smtp-primary-host"),
+			smtpListen:          cmd.String("smtp-listen"),
+			smtpPrimaryHost:     cmd.String("smtp-primary-host"),
 			smtpMaxEnvelopeSize: smtpMaxEnvelopeSize,
-			smtpAllowedHosts:    ctx.String("smtp-allowed-hosts"),
-			configFile:          ctx.String("config-file"),
+			smtpAllowedHosts:    cmd.String("smtp-allowed-hosts"),
+			configFile:          cmd.String("config-file"),
 		}
-		forwardedAttachmentMaxSize, err := units.FromHumanSize(ctx.String("forwarded-attachment-max-size"))
+		forwardedAttachmentMaxSize, err := units.FromHumanSize(cmd.String("forwarded-attachment-max-size"))
 		if err != nil {
 			fmt.Printf("%s\n", err)
 			os.Exit(1)
 		}
-		forwardedAttachmentMaxPhotoSize, err := units.FromHumanSize(ctx.String("forwarded-attachment-max-photo-size"))
+		forwardedAttachmentMaxPhotoSize, err := units.FromHumanSize(cmd.String("forwarded-attachment-max-photo-size"))
 		if err != nil {
 			fmt.Printf("%s\n", err)
 			os.Exit(1)
 		}
 		telegramConfig := &TelegramConfig{
-			telegramChatIDs:                  ctx.String("telegram-chat-ids"),
-			telegramBotToken:                 ctx.String("telegram-bot-token"),
-			telegramAPIPrefix:                ctx.String("telegram-api-prefix"),
-			telegramAPITimeoutSeconds:        ctx.Float64("telegram-api-timeout-seconds"),
-			messageTemplate:                  ctx.String("message-template"),
+			telegramChatIDs:                  cmd.String("telegram-chat-ids"),
+			telegramBotToken:                 cmd.String("telegram-bot-token"),
+			telegramAPIPrefix:                cmd.String("telegram-api-prefix"),
+			telegramAPITimeoutSeconds:        cmd.Float64("telegram-api-timeout-seconds"),
+			messageTemplate:                  cmd.String("message-template"),
 			forwardedAttachmentMaxSize:       int(forwardedAttachmentMaxSize),
 			forwardedAttachmentMaxPhotoSize:  int(forwardedAttachmentMaxPhotoSize),
-			forwardedAttachmentRespectErrors: ctx.Bool("forwarded-attachment-respect-errors"),
-			messageLengthToSendAsFile:        ctx.Uint("message-length-to-send-as-file"),
+			forwardedAttachmentRespectErrors: cmd.Bool("forwarded-attachment-respect-errors"),
+			messageLengthToSendAsFile:        uint(cmd.Uint("message-length-to-send-as-file")),
 		}
 		d, err := SMTPStart(smtpConfig, telegramConfig)
 		if err != nil {
@@ -180,107 +181,108 @@ func main() {
 		}
 		sigHandler(&d)
 		return nil
+		},
+		Flags: []cli.Flag{
+			&cli.StringFlag{
+				Name:    "smtp-listen",
+				Value:   "127.0.0.1:2525",
+				Usage:   "SMTP: TCP address to listen to",
+				Sources: cli.EnvVars("ST_SMTP_LISTEN"),
+			},
+			&cli.StringFlag{
+				Name:    "smtp-primary-host",
+				Value:   GetHostname(),
+				Usage:   "SMTP: primary host",
+				Sources: cli.EnvVars("ST_SMTP_PRIMARY_HOST"),
+			},
+			&cli.StringFlag{
+				Name:    "smtp-allowed-hosts",
+				Usage:   "SMTP: allowed hosts separated by comma, default is any",
+				Value:   ".",
+				Sources: cli.EnvVars("ST_SMTP_ALLOWED_HOSTS"),
+			},
+			&cli.StringFlag{
+				Name:    "smtp-max-envelope-size",
+				Usage:   "Max size of an incoming Email. Examples: 5k, 10m.",
+				Value:   "50m",
+				Sources: cli.EnvVars("ST_SMTP_MAX_ENVELOPE_SIZE"),
+			},
+			&cli.StringFlag{
+				Name:    "blacklist-file",
+				Usage:   "DEPRECATED: Use --config-file instead",
+				Sources: cli.EnvVars("ST_BLACKLIST_FILE"),
+				Hidden:  true,
+			},
+			&cli.StringFlag{
+				Name:    "config-file",
+				Usage:   "Path to YAML configuration file",
+				Sources: cli.EnvVars("ST_CONFIG_FILE"),
+			},
+			&cli.StringFlag{
+				Name:     "telegram-chat-ids",
+				Usage:    "Telegram: comma-separated list of chat ids",
+				Sources:  cli.EnvVars("ST_TELEGRAM_CHAT_IDS"),
+				Required: true,
+			},
+			&cli.StringFlag{
+				Name:     "telegram-bot-token",
+				Usage:    "Telegram: bot token",
+				Sources:  cli.EnvVars("ST_TELEGRAM_BOT_TOKEN"),
+				Required: true,
+			},
+			&cli.StringFlag{
+				Name:    "telegram-api-prefix",
+				Usage:   "Telegram: API url prefix",
+				Value:   "https://api.telegram.org/",
+				Sources: cli.EnvVars("ST_TELEGRAM_API_PREFIX"),
+			},
+			&cli.StringFlag{
+				Name:    "message-template",
+				Usage:   "Telegram message template",
+				Value:   "From: {from}\\nTo: {to}\\nSubject: {subject}\\n\\n{body}\\n\\n{attachments_details}",
+				Sources: cli.EnvVars("ST_TELEGRAM_MESSAGE_TEMPLATE"),
+			},
+			&cli.Float64Flag{
+				Name:    "telegram-api-timeout-seconds",
+				Usage:   "HTTP timeout used for requests to the Telegram API",
+				Value:   30,
+				Sources: cli.EnvVars("ST_TELEGRAM_API_TIMEOUT_SECONDS"),
+			},
+			&cli.StringFlag{
+				Name: "forwarded-attachment-max-size",
+				Usage: "Max size of an attachment to be forwarded to telegram. " +
+					"0 -- disable forwarding. Examples: 5k, 10m. " +
+					"Telegram API has a 50m limit on their side.",
+				Value:   "10m",
+				Sources: cli.EnvVars("ST_FORWARDED_ATTACHMENT_MAX_SIZE"),
+			},
+			&cli.StringFlag{
+				Name: "forwarded-attachment-max-photo-size",
+				Usage: "Max size of a photo attachment to be forwarded to telegram. " +
+					"0 -- disable forwarding. Examples: 5k, 10m. " +
+					"Telegram API has a 10m limit on their side.",
+				Value:   "10m",
+				Sources: cli.EnvVars("ST_FORWARDED_ATTACHMENT_MAX_PHOTO_SIZE"),
+			},
+			&cli.BoolFlag{
+				Name: "forwarded-attachment-respect-errors",
+				Usage: "Reject the whole email if some attachments " +
+					"could not have been forwarded",
+				Value:   false,
+				Sources: cli.EnvVars("ST_FORWARDED_ATTACHMENT_RESPECT_ERRORS"),
+			},
+			&cli.UintFlag{
+				Name: "message-length-to-send-as-file",
+				Usage: "If message length is greater than this number, it is " +
+					"sent truncated followed by a text file containing " +
+					"the full message. Telegram API has a limit of 4096 chars per message. " +
+					"The maximum text file size is determined by `forwarded-attachment-max-size`.",
+				Value:   4095,
+				Sources: cli.EnvVars("ST_MESSAGE_LENGTH_TO_SEND_AS_FILE"),
+			},
+		},
 	}
-	app.Flags = []cli.Flag{
-		&cli.StringFlag{
-			Name:    "smtp-listen",
-			Value:   "127.0.0.1:2525",
-			Usage:   "SMTP: TCP address to listen to",
-			EnvVars: []string{"ST_SMTP_LISTEN"},
-		},
-		&cli.StringFlag{
-			Name:    "smtp-primary-host",
-			Value:   GetHostname(),
-			Usage:   "SMTP: primary host",
-			EnvVars: []string{"ST_SMTP_PRIMARY_HOST"},
-		},
-		&cli.StringFlag{
-			Name:    "smtp-allowed-hosts",
-			Usage:   "SMTP: allowed hosts separated by comma, default is any",
-			Value:   ".",
-			EnvVars: []string{"ST_SMTP_ALLOWED_HOSTS"},
-		},
-		&cli.StringFlag{
-			Name:    "smtp-max-envelope-size",
-			Usage:   "Max size of an incoming Email. Examples: 5k, 10m.",
-			Value:   "50m",
-			EnvVars: []string{"ST_SMTP_MAX_ENVELOPE_SIZE"},
-		},
-		&cli.StringFlag{
-			Name:    "blacklist-file",
-			Usage:   "DEPRECATED: Use --config-file instead",
-			EnvVars: []string{"ST_BLACKLIST_FILE"},
-			Hidden:  true,
-		},
-		&cli.StringFlag{
-			Name:    "config-file",
-			Usage:   "Path to YAML configuration file",
-			EnvVars: []string{"ST_CONFIG_FILE"},
-		},
-		&cli.StringFlag{
-			Name:     "telegram-chat-ids",
-			Usage:    "Telegram: comma-separated list of chat ids",
-			EnvVars:  []string{"ST_TELEGRAM_CHAT_IDS"},
-			Required: true,
-		},
-		&cli.StringFlag{
-			Name:     "telegram-bot-token",
-			Usage:    "Telegram: bot token",
-			EnvVars:  []string{"ST_TELEGRAM_BOT_TOKEN"},
-			Required: true,
-		},
-		&cli.StringFlag{
-			Name:    "telegram-api-prefix",
-			Usage:   "Telegram: API url prefix",
-			Value:   "https://api.telegram.org/",
-			EnvVars: []string{"ST_TELEGRAM_API_PREFIX"},
-		},
-		&cli.StringFlag{
-			Name:    "message-template",
-			Usage:   "Telegram message template",
-			Value:   "From: {from}\\nTo: {to}\\nSubject: {subject}\\n\\n{body}\\n\\n{attachments_details}",
-			EnvVars: []string{"ST_TELEGRAM_MESSAGE_TEMPLATE"},
-		},
-		&cli.Float64Flag{
-			Name:    "telegram-api-timeout-seconds",
-			Usage:   "HTTP timeout used for requests to the Telegram API",
-			Value:   30,
-			EnvVars: []string{"ST_TELEGRAM_API_TIMEOUT_SECONDS"},
-		},
-		&cli.StringFlag{
-			Name: "forwarded-attachment-max-size",
-			Usage: "Max size of an attachment to be forwarded to telegram. " +
-				"0 -- disable forwarding. Examples: 5k, 10m. " +
-				"Telegram API has a 50m limit on their side.",
-			Value:   "10m",
-			EnvVars: []string{"ST_FORWARDED_ATTACHMENT_MAX_SIZE"},
-		},
-		&cli.StringFlag{
-			Name: "forwarded-attachment-max-photo-size",
-			Usage: "Max size of a photo attachment to be forwarded to telegram. " +
-				"0 -- disable forwarding. Examples: 5k, 10m. " +
-				"Telegram API has a 10m limit on their side.",
-			Value:   "10m",
-			EnvVars: []string{"ST_FORWARDED_ATTACHMENT_MAX_PHOTO_SIZE"},
-		},
-		&cli.BoolFlag{
-			Name: "forwarded-attachment-respect-errors",
-			Usage: "Reject the whole email if some attachments " +
-				"could not have been forwarded",
-			Value:   false,
-			EnvVars: []string{"ST_FORWARDED_ATTACHMENT_RESPECT_ERRORS"},
-		},
-		&cli.UintFlag{
-			Name: "message-length-to-send-as-file",
-			Usage: "If message length is greater than this number, it is " +
-				"sent truncated followed by a text file containing " +
-				"the full message. Telegram API has a limit of 4096 chars per message. " +
-				"The maximum text file size is determined by `forwarded-attachment-max-size`.",
-			Value:   4095,
-			EnvVars: []string{"ST_MESSAGE_LENGTH_TO_SEND_AS_FILE"},
-		},
-	}
-	err := app.Run(os.Args)
+	err := cmd.Run(context.Background(), os.Args)
 	if err != nil {
 		fmt.Printf("%s\n", err)
 		os.Exit(1)
