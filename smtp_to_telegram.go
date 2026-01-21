@@ -36,18 +36,19 @@ var (
 	filterRules []FilterRule
 
 	// Sentinel errors
-	errInvalidMatchType      = errors.New("invalid match type")
-	errInvalidField          = errors.New("invalid field")
-	errRejectedByFilter      = errors.New("email rejected by filter rule")
-	errReadingJSON           = errors.New("error reading json body of sendMessage")
-	errParsingJSON           = errors.New("error parsing json body of sendMessage")
-	errResponseNotOK         = errors.New("telegram API response not ok")
-	errUnknownFileType       = errors.New("unknown file type")
-	errEmailParsing          = errors.New("error occurred during email parsing")
-	errMessageTooLarge       = errors.New("message length is larger than forwarded-attachment-max-size")
-	errUnexpectedTruncation  = errors.New("unexpected length of truncated message")
-	errTelegramNon200        = errors.New("non-200 response from Telegram")
-	errSanitizedTelegramFail = errors.New("telegram operation failed")
+	errInvalidMatchType       = errors.New("invalid match type")
+	errInvalidField           = errors.New("invalid field")
+	errRejectedByFilter       = errors.New("email rejected by filter rule")
+	errReadingJSON            = errors.New("error reading json body of sendMessage")
+	errParsingJSON            = errors.New("error parsing json body of sendMessage")
+	errResponseNotOK          = errors.New("telegram API response not ok")
+	errUnknownFileType        = errors.New("unknown file type")
+	errEmailParsing           = errors.New("error occurred during email parsing")
+	errMessageTooLarge        = errors.New("message length is larger than forwarded-attachment-max-size")
+	errUnexpectedTruncation   = errors.New("unexpected length of truncated message")
+	errTelegramNon200         = errors.New("non-200 response from Telegram")
+	errSanitizedTelegramFail  = errors.New("telegram operation failed")
+	errBlacklistFileDeprecate = errors.New("--blacklist-file is deprecated, use --config-file with filter_rules in YAML instead")
 )
 
 type FilterCondition struct {
@@ -121,12 +122,12 @@ type FormattedAttachment struct {
 	fileType int
 }
 
-func GetHostname() string {
+func GetHostname() (string, error) {
 	hostname, err := os.Hostname()
 	if err != nil {
-		panic(fmt.Sprintf("Unable to detect hostname: %s", err))
+		return "", fmt.Errorf("unable to detect hostname: %w", err)
 	}
-	return hostname
+	return hostname, nil
 }
 
 func main() {
@@ -138,31 +139,32 @@ func main() {
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			smtpMaxEnvelopeSize, err := units.FromHumanSize(cmd.String("smtp-max-envelope-size"))
 			if err != nil {
-				fmt.Printf("%s\n", err)
-				os.Exit(1)
+				return err
 			}
 			if cmd.String("blacklist-file") != "" {
-				fmt.Println("Error: --blacklist-file is deprecated and no longer supported.")
-				fmt.Println("Please use --config-file with filter_rules in YAML instead.")
-				fmt.Println("See README.md for configuration documentation.")
-				os.Exit(1)
+				return errBlacklistFileDeprecate
+			}
+			smtpPrimaryHost := cmd.String("smtp-primary-host")
+			if smtpPrimaryHost == "" {
+				smtpPrimaryHost, err = GetHostname()
+				if err != nil {
+					return err
+				}
 			}
 			smtpConfig := &SMTPConfig{
 				smtpListen:          cmd.String("smtp-listen"),
-				smtpPrimaryHost:     cmd.String("smtp-primary-host"),
+				smtpPrimaryHost:     smtpPrimaryHost,
 				smtpMaxEnvelopeSize: smtpMaxEnvelopeSize,
 				smtpAllowedHosts:    cmd.String("smtp-allowed-hosts"),
 				configFile:          cmd.String("config-file"),
 			}
 			forwardedAttachmentMaxSize, err := units.FromHumanSize(cmd.String("forwarded-attachment-max-size"))
 			if err != nil {
-				fmt.Printf("%s\n", err)
-				os.Exit(1)
+				return err
 			}
 			forwardedAttachmentMaxPhotoSize, err := units.FromHumanSize(cmd.String("forwarded-attachment-max-photo-size"))
 			if err != nil {
-				fmt.Printf("%s\n", err)
-				os.Exit(1)
+				return err
 			}
 			telegramConfig := &TelegramConfig{
 				telegramChatIDs:                  cmd.String("telegram-chat-ids"),
@@ -177,7 +179,7 @@ func main() {
 			}
 			d, err := SMTPStart(smtpConfig, telegramConfig)
 			if err != nil {
-				panic(fmt.Sprintf("start error: %s", err))
+				return fmt.Errorf("start error: %w", err)
 			}
 			return awaitShutdown(ctx, &d)
 		},
@@ -190,8 +192,7 @@ func main() {
 			},
 			&cli.StringFlag{
 				Name:    "smtp-primary-host",
-				Value:   GetHostname(),
-				Usage:   "SMTP: primary host",
+				Usage:   "SMTP: primary host (defaults to system hostname)",
 				Sources: cli.EnvVars("ST_SMTP_PRIMARY_HOST"),
 			},
 			&cli.StringFlag{
@@ -571,6 +572,49 @@ func SendMessageToChat(
 	return result.Result, nil
 }
 
+func buildAttachmentForm(
+	w *multipart.Writer,
+	attachment *FormattedAttachment,
+	chatID string,
+	sentMessage *TelegramAPIMessage,
+) (string, error) {
+	// https://core.telegram.org/bots/api#sending-files
+	var method, fileFieldName string
+	switch attachment.fileType {
+	case AttachmentTypeDocument:
+		// https://core.telegram.org/bots/api#senddocument
+		method = "sendDocument"
+		fileFieldName = "document"
+	case AttachmentTypePhoto:
+		// https://core.telegram.org/bots/api#sendphoto
+		method = "sendPhoto"
+		fileFieldName = "photo"
+	default:
+		return "", fmt.Errorf("%w: %d", errUnknownFileType, attachment.fileType)
+	}
+
+	if err := w.WriteField("chat_id", chatID); err != nil {
+		return "", fmt.Errorf("failed to write chat_id: %w", err)
+	}
+	if err := w.WriteField("reply_to_message_id", sentMessage.MessageID.String()); err != nil {
+		return "", fmt.Errorf("failed to write reply_to_message_id: %w", err)
+	}
+	if err := w.WriteField("caption", attachment.caption); err != nil {
+		return "", fmt.Errorf("failed to write caption: %w", err)
+	}
+
+	// TODO maybe reuse files sent to multiple chats via file_id?
+	fileWriter, err := w.CreateFormFile(fileFieldName, attachment.filename)
+	if err != nil {
+		return "", fmt.Errorf("failed to create form file: %w", err)
+	}
+	if _, err := fileWriter.Write(attachment.content); err != nil {
+		return "", fmt.Errorf("failed to write file content: %w", err)
+	}
+
+	return method, nil
+}
+
 func SendAttachmentToChat(
 	attachment *FormattedAttachment,
 	chatID string,
@@ -580,35 +624,15 @@ func SendAttachmentToChat(
 ) error {
 	buf := new(bytes.Buffer)
 	w := multipart.NewWriter(buf)
-	var method string
-	// https://core.telegram.org/bots/api#sending-files
-	switch attachment.fileType {
-	case AttachmentTypeDocument:
-		// https://core.telegram.org/bots/api#senddocument
-		method = "sendDocument"
-		panicIfError(w.WriteField("chat_id", chatID))
-		panicIfError(w.WriteField("reply_to_message_id", sentMessage.MessageID.String()))
-		panicIfError(w.WriteField("caption", attachment.caption))
-		// TODO maybe reuse files sent to multiple chats via file_id?
-		dw, err := w.CreateFormFile("document", attachment.filename)
-		panicIfError(err)
-		_, err = dw.Write(attachment.content)
-		panicIfError(err)
-	case AttachmentTypePhoto:
-		// https://core.telegram.org/bots/api#sendphoto
-		method = "sendPhoto"
-		panicIfError(w.WriteField("chat_id", chatID))
-		panicIfError(w.WriteField("reply_to_message_id", sentMessage.MessageID.String()))
-		panicIfError(w.WriteField("caption", attachment.caption))
-		// TODO maybe reuse files sent to multiple chats via file_id?
-		dw, err := w.CreateFormFile("photo", attachment.filename)
-		panicIfError(err)
-		_, err = dw.Write(attachment.content)
-		panicIfError(err)
-	default:
-		panic(fmt.Errorf("%w: %d", errUnknownFileType, attachment.fileType))
+
+	method, err := buildAttachmentForm(w, attachment, chatID, sentMessage)
+	if err != nil {
+		return err
 	}
-	panicIfError(w.Close())
+
+	if err = w.Close(); err != nil {
+		return fmt.Errorf("failed to close multipart writer: %w", err)
+	}
 
 	resp, err := client.Post(
 		fmt.Sprintf(
@@ -870,11 +894,6 @@ func SanitizeBotToken(s, botToken string) string {
 	return strings.ReplaceAll(s, botToken, "***")
 }
 
-func panicIfError(err error) {
-	if err != nil {
-		panic(err)
-	}
-}
 
 func awaitShutdown(ctx context.Context, d *guerrilla.Daemon) error {
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGINT)
