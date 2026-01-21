@@ -28,30 +28,31 @@ var (
 
 func makeSMTPConfig() *SMTPConfig {
 	return &SMTPConfig{
-		smtpListen:      fmt.Sprintf("%s:%d", testSMTPListenHost, testSMTPListenPort),
-		smtpPrimaryHost: "testhost",
+		Listen:      fmt.Sprintf("%s:%d", testSMTPListenHost, testSMTPListenPort),
+		PrimaryHost: "testhost",
 	}
 }
 
 func makeTelegramConfig() *TelegramConfig {
 	return &TelegramConfig{
-		telegramChatIDs:                  "42,142",
-		telegramBotToken:                 "42:ZZZ",
-		telegramAPIPrefix:                "http://" + testHTTPServerListen + "/",
-		messageTemplate:                  "From: {from}\\nTo: {to}\\nSubject: {subject}\\n\\n{body}\\n\\n{attachments_details}",
-		forwardedAttachmentMaxSize:       0,
-		forwardedAttachmentMaxPhotoSize:  0,
-		forwardedAttachmentRespectErrors: true,
-		messageLengthToSendAsFile:        4095,
+		ChatIDs:                   "42,142",
+		BotToken:                  "42:ZZZ",
+		APIPrefix:                 "http://" + testHTTPServerListen + "/",
+		MessageTemplate:           "From: {from}\\nTo: {to}\\nSubject: {subject}\\n\\n{body}\\n\\n{attachments_details}",
+		ForwardedAttachmentMaxSize:         0,
+		ForwardedAttachmentMaxPhotoSize:    0,
+		ForwardedAttachmentRespectErrors:   true,
+		MessageLengthToSendAsFile: 4095,
 	}
 }
 
-func startSMTP(smtpConfig *SMTPConfig, telegramConfig *TelegramConfig) guerrilla.Daemon {
+func startSMTP(t *testing.T, smtpConfig *SMTPConfig, telegramConfig *TelegramConfig) guerrilla.Daemon {
+	t.Helper()
 	d, err := SMTPStart(smtpConfig, telegramConfig)
 	if err != nil {
-		panic(fmt.Sprintf("start error: %s", err))
+		t.Fatalf("start error: %s", err)
 	}
-	waitSMTP(smtpConfig.smtpListen)
+	waitSMTP(smtpConfig.Listen)
 	return d
 }
 
@@ -76,17 +77,17 @@ func goMailBody(content []byte) gomail.FileSetting {
 func TestSuccess(t *testing.T) {
 	smtpConfig := makeSMTPConfig()
 	telegramConfig := makeTelegramConfig()
-	d := startSMTP(smtpConfig, telegramConfig)
+	d := startSMTP(t, smtpConfig, telegramConfig)
 	defer d.Shutdown()
 
 	h := NewSuccessHandler()
-	s := HTTPServer(h)
+	s := HTTPServer(t, h)
 	defer func() { _ = s.Shutdown(context.Background()) }()
 
-	err := smtp.SendMail(smtpConfig.smtpListen, nil, "from@test", []string{"to@test"}, []byte(`hi`))
+	err := smtp.SendMail(smtpConfig.Listen, nil, "from@test", []string{"to@test"}, []byte(`hi`))
 	require.NoError(t, err)
 
-	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIDs, ",")))
+	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.ChatIDs, ",")))
 	exp :=
 		"From: from@test\n" +
 			"To: to@test\n" +
@@ -100,19 +101,19 @@ func TestSuccess(t *testing.T) {
 func TestSuccessCustomFormat(t *testing.T) {
 	smtpConfig := makeSMTPConfig()
 	telegramConfig := makeTelegramConfig()
-	telegramConfig.messageTemplate =
+	telegramConfig.MessageTemplate =
 		"Subject: {subject}\\n\\n{body}"
-	d := startSMTP(smtpConfig, telegramConfig)
+	d := startSMTP(t, smtpConfig, telegramConfig)
 	defer d.Shutdown()
 
 	h := NewSuccessHandler()
-	s := HTTPServer(h)
+	s := HTTPServer(t, h)
 	defer func() { _ = s.Shutdown(context.Background()) }()
 
-	err := smtp.SendMail(smtpConfig.smtpListen, nil, "from@test", []string{"to@test"}, []byte(`hi`))
+	err := smtp.SendMail(smtpConfig.Listen, nil, "from@test", []string{"to@test"}, []byte(`hi`))
 	require.NoError(t, err)
 
-	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIDs, ",")))
+	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.ChatIDs, ",")))
 	exp := "Subject: \n" +
 		"\n" +
 		"hi"
@@ -123,34 +124,34 @@ func TestSuccessCustomFormat(t *testing.T) {
 func TestTelegramUnreachable(t *testing.T) {
 	smtpConfig := makeSMTPConfig()
 	telegramConfig := makeTelegramConfig()
-	d := startSMTP(smtpConfig, telegramConfig)
+	d := startSMTP(t, smtpConfig, telegramConfig)
 	defer d.Shutdown()
 
-	err := smtp.SendMail(smtpConfig.smtpListen, nil, "from@test", []string{"to@test"}, []byte(`hi`))
+	err := smtp.SendMail(smtpConfig.Listen, nil, "from@test", []string{"to@test"}, []byte(`hi`))
 	require.Error(t, err)
 }
 
 func TestTelegramHttpError(t *testing.T) {
 	smtpConfig := makeSMTPConfig()
 	telegramConfig := makeTelegramConfig()
-	d := startSMTP(smtpConfig, telegramConfig)
+	d := startSMTP(t, smtpConfig, telegramConfig)
 	defer d.Shutdown()
 
-	s := HTTPServer(&ErrorHandler{})
+	s := HTTPServer(t, &ErrorHandler{})
 	defer func() { _ = s.Shutdown(context.Background()) }()
 
-	err := smtp.SendMail(smtpConfig.smtpListen, nil, "from@test", []string{"to@test"}, []byte(`hi`))
+	err := smtp.SendMail(smtpConfig.Listen, nil, "from@test", []string{"to@test"}, []byte(`hi`))
 	require.Error(t, err)
 }
 
 func TestEncodedContent(t *testing.T) {
 	smtpConfig := makeSMTPConfig()
 	telegramConfig := makeTelegramConfig()
-	d := startSMTP(smtpConfig, telegramConfig)
+	d := startSMTP(t, smtpConfig, telegramConfig)
 	defer d.Shutdown()
 
 	h := NewSuccessHandler()
-	s := HTTPServer(h)
+	s := HTTPServer(t, h)
 	defer func() { _ = s.Shutdown(context.Background()) }()
 
 	b := []byte(
@@ -159,10 +160,10 @@ func TestEncodedContent(t *testing.T) {
 			"Content-Transfer-Encoding: quoted-printable\r\n" +
 			"\r\n" +
 			"=F0=9F=92=A9\r\n")
-	err := smtp.SendMail(smtpConfig.smtpListen, nil, "from@test", []string{"to@test"}, b)
+	err := smtp.SendMail(smtpConfig.Listen, nil, "from@test", []string{"to@test"}, b)
 	require.NoError(t, err)
 
-	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIDs, ",")))
+	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.ChatIDs, ",")))
 	exp :=
 		"From: from@test\n" +
 			"To: to@test\n" +
@@ -175,11 +176,11 @@ func TestEncodedContent(t *testing.T) {
 func TestHtmlAttachmentIsIgnored(t *testing.T) {
 	smtpConfig := makeSMTPConfig()
 	telegramConfig := makeTelegramConfig()
-	d := startSMTP(smtpConfig, telegramConfig)
+	d := startSMTP(t, smtpConfig, telegramConfig)
 	defer d.Shutdown()
 
 	h := NewSuccessHandler()
-	s := HTTPServer(h)
+	s := HTTPServer(t, h)
 	defer func() { _ = s.Shutdown(context.Background()) }()
 
 	m := gomail.NewMessage()
@@ -193,7 +194,7 @@ func TestHtmlAttachmentIsIgnored(t *testing.T) {
 	err := di.DialAndSend(m)
 	require.NoError(t, err)
 
-	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIDs, ",")))
+	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.ChatIDs, ",")))
 	exp :=
 		"From: from@test\n" +
 			"To: to@test\n" +
@@ -206,11 +207,11 @@ func TestHtmlAttachmentIsIgnored(t *testing.T) {
 func TestAttachmentsDetails(t *testing.T) {
 	smtpConfig := makeSMTPConfig()
 	telegramConfig := makeTelegramConfig()
-	d := startSMTP(smtpConfig, telegramConfig)
+	d := startSMTP(t, smtpConfig, telegramConfig)
 	defer d.Shutdown()
 
 	h := NewSuccessHandler()
-	s := HTTPServer(h)
+	s := HTTPServer(t, h)
 	defer func() { _ = s.Shutdown(context.Background()) }()
 
 	m := gomail.NewMessage()
@@ -230,7 +231,7 @@ func TestAttachmentsDetails(t *testing.T) {
 	err := di.DialAndSend(m)
 	require.NoError(t, err)
 
-	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIDs, ",")))
+	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.ChatIDs, ",")))
 	require.Empty(t, h.RequestDocuments)
 	exp :=
 		"From: from@test\n" +
@@ -249,13 +250,13 @@ func TestAttachmentsDetails(t *testing.T) {
 func TestAttachmentsSending(t *testing.T) {
 	smtpConfig := makeSMTPConfig()
 	telegramConfig := makeTelegramConfig()
-	telegramConfig.forwardedAttachmentMaxSize = 1024
-	telegramConfig.forwardedAttachmentMaxPhotoSize = 1024
-	d := startSMTP(smtpConfig, telegramConfig)
+	telegramConfig.ForwardedAttachmentMaxSize = 1024
+	telegramConfig.ForwardedAttachmentMaxPhotoSize = 1024
+	d := startSMTP(t, smtpConfig, telegramConfig)
 	defer d.Shutdown()
 
 	h := NewSuccessHandler()
-	s := HTTPServer(h)
+	s := HTTPServer(t, h)
 	defer func() { _ = s.Shutdown(context.Background()) }()
 
 	m := gomail.NewMessage()
@@ -273,22 +274,22 @@ func TestAttachmentsSending(t *testing.T) {
 
 	expFiles := []*FormattedAttachment{
 		{
-			filename: "inline.jpg",
-			caption:  "inline.jpg",
-			content:  []byte("JPG"),
-			fileType: AttachmentTypePhoto,
+			Filename: "inline.jpg",
+			Caption:  "inline.jpg",
+			Content:  []byte("JPG"),
+			FileType: AttachmentTypePhoto,
 		},
 		{
-			filename: "hey.txt",
-			caption:  "hey.txt",
-			content:  []byte("hi"),
-			fileType: AttachmentTypeDocument,
+			Filename: "hey.txt",
+			Caption:  "hey.txt",
+			Content:  []byte("hi"),
+			FileType: AttachmentTypeDocument,
 		},
 		{
-			filename: "attachment.jpg",
-			caption:  "attachment.jpg",
-			content:  []byte("JPG"),
-			fileType: AttachmentTypePhoto,
+			Filename: "attachment.jpg",
+			Caption:  "attachment.jpg",
+			Content:  []byte("JPG"),
+			FileType: AttachmentTypePhoto,
 		},
 	}
 
@@ -296,8 +297,8 @@ func TestAttachmentsSending(t *testing.T) {
 	err := di.DialAndSend(m)
 	require.NoError(t, err)
 
-	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIDs, ",")))
-	require.Len(t, h.RequestDocuments, len(expFiles)*len(strings.Split(telegramConfig.telegramChatIDs, ",")))
+	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.ChatIDs, ",")))
+	require.Len(t, h.RequestDocuments, len(expFiles)*len(strings.Split(telegramConfig.ChatIDs, ",")))
 	exp :=
 		"From: from@test\n" +
 			"To: to@test\n" +
@@ -318,14 +319,14 @@ func TestAttachmentsSending(t *testing.T) {
 func TestLargeMessageAggressivelyTruncated(t *testing.T) {
 	smtpConfig := makeSMTPConfig()
 	telegramConfig := makeTelegramConfig()
-	telegramConfig.messageLengthToSendAsFile = 12
-	telegramConfig.forwardedAttachmentMaxSize = 1024
-	telegramConfig.forwardedAttachmentMaxPhotoSize = 1024
-	d := startSMTP(smtpConfig, telegramConfig)
+	telegramConfig.MessageLengthToSendAsFile = 12
+	telegramConfig.ForwardedAttachmentMaxSize = 1024
+	telegramConfig.ForwardedAttachmentMaxPhotoSize = 1024
+	d := startSMTP(t, smtpConfig, telegramConfig)
 	defer d.Shutdown()
 
 	h := NewSuccessHandler()
-	s := HTTPServer(h)
+	s := HTTPServer(t, h)
 	defer func() { _ = s.Shutdown(context.Background()) }()
 
 	m := gomail.NewMessage()
@@ -342,10 +343,10 @@ func TestLargeMessageAggressivelyTruncated(t *testing.T) {
 			strings.Repeat("Hello_", 60)
 	expFiles := []*FormattedAttachment{
 		{
-			filename: "full_message.txt",
-			caption:  "Full message",
-			content:  []byte(expFull),
-			fileType: AttachmentTypeDocument,
+			Filename: "full_message.txt",
+			Caption:  "Full message",
+			Content:  []byte(expFull),
+			FileType: AttachmentTypeDocument,
 		},
 	}
 
@@ -353,8 +354,8 @@ func TestLargeMessageAggressivelyTruncated(t *testing.T) {
 	err := di.DialAndSend(m)
 	require.NoError(t, err)
 
-	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIDs, ",")))
-	require.Len(t, h.RequestDocuments, len(strings.Split(telegramConfig.telegramChatIDs, ",")))
+	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.ChatIDs, ",")))
+	require.Len(t, h.RequestDocuments, len(strings.Split(telegramConfig.ChatIDs, ",")))
 
 	exp :=
 		"From: from@t"
@@ -367,14 +368,14 @@ func TestLargeMessageAggressivelyTruncated(t *testing.T) {
 func TestLargeMessageProperlyTruncated(t *testing.T) {
 	smtpConfig := makeSMTPConfig()
 	telegramConfig := makeTelegramConfig()
-	telegramConfig.messageLengthToSendAsFile = 100
-	telegramConfig.forwardedAttachmentMaxSize = 1024
-	telegramConfig.forwardedAttachmentMaxPhotoSize = 1024
-	d := startSMTP(smtpConfig, telegramConfig)
+	telegramConfig.MessageLengthToSendAsFile = 100
+	telegramConfig.ForwardedAttachmentMaxSize = 1024
+	telegramConfig.ForwardedAttachmentMaxPhotoSize = 1024
+	d := startSMTP(t, smtpConfig, telegramConfig)
 	defer d.Shutdown()
 
 	h := NewSuccessHandler()
-	s := HTTPServer(h)
+	s := HTTPServer(t, h)
 	defer func() { _ = s.Shutdown(context.Background()) }()
 
 	m := gomail.NewMessage()
@@ -391,10 +392,10 @@ func TestLargeMessageProperlyTruncated(t *testing.T) {
 			strings.Repeat("Hello_", 60)
 	expFiles := []*FormattedAttachment{
 		{
-			filename: "full_message.txt",
-			caption:  "Full message",
-			content:  []byte(expFull),
-			fileType: AttachmentTypeDocument,
+			Filename: "full_message.txt",
+			Caption:  "Full message",
+			Content:  []byte(expFull),
+			FileType: AttachmentTypeDocument,
 		},
 	}
 
@@ -402,8 +403,8 @@ func TestLargeMessageProperlyTruncated(t *testing.T) {
 	err := di.DialAndSend(m)
 	require.NoError(t, err)
 
-	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIDs, ",")))
-	require.Len(t, h.RequestDocuments, len(strings.Split(telegramConfig.telegramChatIDs, ",")))
+	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.ChatIDs, ",")))
+	require.Len(t, h.RequestDocuments, len(strings.Split(telegramConfig.ChatIDs, ",")))
 
 	exp :=
 		"From: from@test\n" +
@@ -422,14 +423,14 @@ func TestLargeMessageProperlyTruncated(t *testing.T) {
 func TestLargeMessageWithAttachmentsProperlyTruncated(t *testing.T) {
 	smtpConfig := makeSMTPConfig()
 	telegramConfig := makeTelegramConfig()
-	telegramConfig.messageLengthToSendAsFile = 150
-	telegramConfig.forwardedAttachmentMaxSize = 1024
-	telegramConfig.forwardedAttachmentMaxPhotoSize = 1024
-	d := startSMTP(smtpConfig, telegramConfig)
+	telegramConfig.MessageLengthToSendAsFile = 150
+	telegramConfig.ForwardedAttachmentMaxSize = 1024
+	telegramConfig.ForwardedAttachmentMaxPhotoSize = 1024
+	d := startSMTP(t, smtpConfig, telegramConfig)
 	defer d.Shutdown()
 
 	h := NewSuccessHandler()
-	s := HTTPServer(h)
+	s := HTTPServer(t, h)
 	defer func() { _ = s.Shutdown(context.Background()) }()
 
 	m := gomail.NewMessage()
@@ -451,16 +452,16 @@ func TestLargeMessageWithAttachmentsProperlyTruncated(t *testing.T) {
 			"- 📎 attachment.jpg (image/jpeg) 3B, sending..."
 	expFiles := []*FormattedAttachment{
 		{
-			filename: "full_message.txt",
-			caption:  "Full message",
-			content:  []byte(expFull),
-			fileType: AttachmentTypeDocument,
+			Filename: "full_message.txt",
+			Caption:  "Full message",
+			Content:  []byte(expFull),
+			FileType: AttachmentTypeDocument,
 		},
 		{
-			filename: "attachment.jpg",
-			caption:  "attachment.jpg",
-			content:  []byte("JPG"),
-			fileType: AttachmentTypePhoto,
+			Filename: "attachment.jpg",
+			Caption:  "attachment.jpg",
+			Content:  []byte("JPG"),
+			FileType: AttachmentTypePhoto,
 		},
 	}
 
@@ -468,8 +469,8 @@ func TestLargeMessageWithAttachmentsProperlyTruncated(t *testing.T) {
 	err := di.DialAndSend(m)
 	require.NoError(t, err)
 
-	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIDs, ",")))
-	require.Len(t, h.RequestDocuments, 2*len(strings.Split(telegramConfig.telegramChatIDs, ",")))
+	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.ChatIDs, ",")))
+	require.Len(t, h.RequestDocuments, 2*len(strings.Split(telegramConfig.ChatIDs, ",")))
 
 	exp :=
 		"From: from@test\n" +
@@ -491,13 +492,13 @@ func TestLargeMessageWithAttachmentsProperlyTruncated(t *testing.T) {
 func TestMuttMessagePlaintextParsing(t *testing.T) {
 	smtpConfig := makeSMTPConfig()
 	telegramConfig := makeTelegramConfig()
-	telegramConfig.forwardedAttachmentMaxSize = 1024
-	telegramConfig.forwardedAttachmentMaxPhotoSize = 1024
-	d := startSMTP(smtpConfig, telegramConfig)
+	telegramConfig.ForwardedAttachmentMaxSize = 1024
+	telegramConfig.ForwardedAttachmentMaxPhotoSize = 1024
+	d := startSMTP(t, smtpConfig, telegramConfig)
 	defer d.Shutdown()
 
 	h := NewSuccessHandler()
-	s := HTTPServer(h)
+	s := HTTPServer(t, h)
 	defer func() { _ = s.Shutdown(context.Background()) }()
 
 	// date | mutt -s "test" -a ./tt -- to@test
@@ -533,10 +534,10 @@ hoho
 
 	expFiles := []*FormattedAttachment{
 		{
-			filename: "tt",
-			caption:  "tt",
-			content:  []byte("hoho\n"),
-			fileType: AttachmentTypeDocument,
+			Filename: "tt",
+			Caption:  "tt",
+			Content:  []byte("hoho\n"),
+			FileType: AttachmentTypeDocument,
 		},
 	}
 
@@ -547,8 +548,8 @@ hoho
 	err = ds.Send("from@test", []string{"to@test"}, bytes.NewBufferString(m))
 	require.NoError(t, err)
 
-	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIDs, ",")))
-	require.Len(t, h.RequestDocuments, len(expFiles)*len(strings.Split(telegramConfig.telegramChatIDs, ",")))
+	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.ChatIDs, ",")))
+	require.Len(t, h.RequestDocuments, len(expFiles)*len(strings.Split(telegramConfig.ChatIDs, ",")))
 	exp :=
 		"From: from@test\n" +
 			"To: to@test\n" +
@@ -567,13 +568,13 @@ hoho
 func TestMailxMessagePlaintextParsing(t *testing.T) {
 	smtpConfig := makeSMTPConfig()
 	telegramConfig := makeTelegramConfig()
-	telegramConfig.forwardedAttachmentMaxSize = 1024
-	telegramConfig.forwardedAttachmentMaxPhotoSize = 1024
-	d := startSMTP(smtpConfig, telegramConfig)
+	telegramConfig.ForwardedAttachmentMaxSize = 1024
+	telegramConfig.ForwardedAttachmentMaxPhotoSize = 1024
+	d := startSMTP(t, smtpConfig, telegramConfig)
 	defer d.Shutdown()
 
 	h := NewSuccessHandler()
-	s := HTTPServer(h)
+	s := HTTPServer(t, h)
 	defer func() { _ = s.Shutdown(context.Background()) }()
 
 	// date | mail -A ./tt -s "test" to@test
@@ -610,10 +611,10 @@ aG9obwo=
 
 	expFiles := []*FormattedAttachment{
 		{
-			filename: "tt",
-			caption:  "./tt",
-			content:  []byte("hoho\n"),
-			fileType: AttachmentTypeDocument,
+			Filename: "tt",
+			Caption:  "./tt",
+			Content:  []byte("hoho\n"),
+			FileType: AttachmentTypeDocument,
 		},
 	}
 
@@ -624,8 +625,8 @@ aG9obwo=
 	err = ds.Send("from@test", []string{"to@test"}, bytes.NewBufferString(m))
 	require.NoError(t, err)
 
-	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIDs, ",")))
-	require.Len(t, h.RequestDocuments, len(expFiles)*len(strings.Split(telegramConfig.telegramChatIDs, ",")))
+	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.ChatIDs, ",")))
+	require.Len(t, h.RequestDocuments, len(expFiles)*len(strings.Split(telegramConfig.ChatIDs, ",")))
 	exp :=
 		"From: from@test\n" +
 			"To: to@test\n" +
@@ -644,11 +645,11 @@ aG9obwo=
 func TestLatin1Encoding(t *testing.T) {
 	smtpConfig := makeSMTPConfig()
 	telegramConfig := makeTelegramConfig()
-	d := startSMTP(smtpConfig, telegramConfig)
+	d := startSMTP(t, smtpConfig, telegramConfig)
 	defer d.Shutdown()
 
 	h := NewSuccessHandler()
-	s := HTTPServer(h)
+	s := HTTPServer(t, h)
 	defer func() { _ = s.Shutdown(context.Background()) }()
 
 	// https://github.com/KostyaEsmukov/smtp_to_telegram/issues/24#issuecomment-980684254
@@ -662,10 +663,10 @@ Content-Transfer-Encoding: base64
 
 QW5uYS1W6XJvbmlxdWUK
 `
-	err := smtp.SendMail(smtpConfig.smtpListen, nil, "from@test", []string{"to@test"}, []byte(m))
+	err := smtp.SendMail(smtpConfig.Listen, nil, "from@test", []string{"to@test"}, []byte(m))
 	require.NoError(t, err)
 
-	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIDs, ",")))
+	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.ChatIDs, ",")))
 	exp :=
 		"From: from@test\n" +
 			"To: to@test\n" +
@@ -675,11 +676,12 @@ QW5uYS1W6XJvbmlxdWUK
 	require.Equal(t, exp, h.RequestMessages[0])
 }
 
-func HTTPServer(handler http.Handler) *http.Server {
+func HTTPServer(t *testing.T, handler http.Handler) *http.Server {
+	t.Helper()
 	h := &http.Server{Addr: testHTTPServerListen, Handler: handler}
 	ln, err := net.Listen("tcp", h.Addr)
 	if err != nil {
-		panic(err)
+		t.Fatalf("failed to start HTTP server: %v", err)
 	}
 	go func() {
 		if err := h.Serve(ln); err != nil {
@@ -741,15 +743,15 @@ func (s *SuccessHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}()
 		var buf bytes.Buffer
 		if _, err := io.Copy(&buf, file); err != nil {
-			panic(fmt.Errorf("failed to copy file content: %w", err))
+			panic(fmt.Errorf("failed to copy file Content: %w", err))
 		}
 		s.RequestDocuments = append(
 			s.RequestDocuments,
 			&FormattedAttachment{
-				filename: header.Filename,
-				caption:  r.FormValue("caption"),
-				content:  buf.Bytes(),
-				fileType: fileType,
+				Filename: header.Filename,
+				Caption:  r.FormValue("caption"),
+				Content:  buf.Bytes(),
+				FileType: fileType,
 			},
 		)
 	} else {
@@ -1187,7 +1189,7 @@ func TestFilterRulesEmptyConditions(t *testing.T) {
 
 func TestSMTPStartWithNonExistentFilterRulesFile(t *testing.T) {
 	smtpConfig := makeSMTPConfig()
-	smtpConfig.configFile = "/non/existent/filter_rules.yaml"
+	smtpConfig.ConfigFile = "/non/existent/filter_rules.yaml"
 	telegramConfig := makeTelegramConfig()
 
 	_, err := SMTPStart(smtpConfig, telegramConfig)
@@ -1213,9 +1215,9 @@ func TestFilteredEmailReturns554(t *testing.T) {
 	require.NoError(t, tmpfile.Close())
 
 	smtpConfig := makeSMTPConfig()
-	smtpConfig.configFile = tmpfile.Name()
+	smtpConfig.ConfigFile = tmpfile.Name()
 	telegramConfig := makeTelegramConfig()
-	d := startSMTP(smtpConfig, telegramConfig)
+	d := startSMTP(t, smtpConfig, telegramConfig)
 	defer d.Shutdown()
 
 	// Test filtered email returns 554 (case-insensitive)
@@ -1250,9 +1252,9 @@ func TestFilteredEmailWithBodyPattern(t *testing.T) {
 	require.NoError(t, tmpfile.Close())
 
 	smtpConfig := makeSMTPConfig()
-	smtpConfig.configFile = tmpfile.Name()
+	smtpConfig.ConfigFile = tmpfile.Name()
 	telegramConfig := makeTelegramConfig()
-	d := startSMTP(smtpConfig, telegramConfig)
+	d := startSMTP(t, smtpConfig, telegramConfig)
 	defer d.Shutdown()
 
 	// Test filtered email returns 554
@@ -1287,13 +1289,13 @@ func TestNonFilteredEmailPasses(t *testing.T) {
 	require.NoError(t, tmpfile.Close())
 
 	smtpConfig := makeSMTPConfig()
-	smtpConfig.configFile = tmpfile.Name()
+	smtpConfig.ConfigFile = tmpfile.Name()
 	telegramConfig := makeTelegramConfig()
-	d := startSMTP(smtpConfig, telegramConfig)
+	d := startSMTP(t, smtpConfig, telegramConfig)
 	defer d.Shutdown()
 
 	h := NewSuccessHandler()
-	s := HTTPServer(h)
+	s := HTTPServer(t, h)
 	defer func() { _ = s.Shutdown(context.Background()) }()
 
 	// Test non-filtered email passes through
@@ -1307,5 +1309,5 @@ func TestNonFilteredEmailPasses(t *testing.T) {
 	err = di.DialAndSend(m)
 	require.NoError(t, err)
 
-	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.telegramChatIDs, ",")))
+	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.ChatIDs, ",")))
 }
