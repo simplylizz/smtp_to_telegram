@@ -137,50 +137,50 @@ func main() {
 		Version: Version,
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			smtpMaxEnvelopeSize, err := units.FromHumanSize(cmd.String("smtp-max-envelope-size"))
-		if err != nil {
-			fmt.Printf("%s\n", err)
-			os.Exit(1)
-		}
-		if cmd.String("blacklist-file") != "" {
-			fmt.Println("Error: --blacklist-file is deprecated and no longer supported.")
-			fmt.Println("Please use --config-file with filter_rules in YAML instead.")
-			fmt.Println("See README.md for configuration documentation.")
-			os.Exit(1)
-		}
-		smtpConfig := &SMTPConfig{
-			smtpListen:          cmd.String("smtp-listen"),
-			smtpPrimaryHost:     cmd.String("smtp-primary-host"),
-			smtpMaxEnvelopeSize: smtpMaxEnvelopeSize,
-			smtpAllowedHosts:    cmd.String("smtp-allowed-hosts"),
-			configFile:          cmd.String("config-file"),
-		}
-		forwardedAttachmentMaxSize, err := units.FromHumanSize(cmd.String("forwarded-attachment-max-size"))
-		if err != nil {
-			fmt.Printf("%s\n", err)
-			os.Exit(1)
-		}
-		forwardedAttachmentMaxPhotoSize, err := units.FromHumanSize(cmd.String("forwarded-attachment-max-photo-size"))
-		if err != nil {
-			fmt.Printf("%s\n", err)
-			os.Exit(1)
-		}
-		telegramConfig := &TelegramConfig{
-			telegramChatIDs:                  cmd.String("telegram-chat-ids"),
-			telegramBotToken:                 cmd.String("telegram-bot-token"),
-			telegramAPIPrefix:                cmd.String("telegram-api-prefix"),
-			telegramAPITimeoutSeconds:        cmd.Float64("telegram-api-timeout-seconds"),
-			messageTemplate:                  cmd.String("message-template"),
-			forwardedAttachmentMaxSize:       int(forwardedAttachmentMaxSize),
-			forwardedAttachmentMaxPhotoSize:  int(forwardedAttachmentMaxPhotoSize),
-			forwardedAttachmentRespectErrors: cmd.Bool("forwarded-attachment-respect-errors"),
-			messageLengthToSendAsFile:        uint(cmd.Uint("message-length-to-send-as-file")),
-		}
-		d, err := SMTPStart(smtpConfig, telegramConfig)
-		if err != nil {
-			panic(fmt.Sprintf("start error: %s", err))
-		}
-		sigHandler(&d)
-		return nil
+			if err != nil {
+				fmt.Printf("%s\n", err)
+				os.Exit(1)
+			}
+			if cmd.String("blacklist-file") != "" {
+				fmt.Println("Error: --blacklist-file is deprecated and no longer supported.")
+				fmt.Println("Please use --config-file with filter_rules in YAML instead.")
+				fmt.Println("See README.md for configuration documentation.")
+				os.Exit(1)
+			}
+			smtpConfig := &SMTPConfig{
+				smtpListen:          cmd.String("smtp-listen"),
+				smtpPrimaryHost:     cmd.String("smtp-primary-host"),
+				smtpMaxEnvelopeSize: smtpMaxEnvelopeSize,
+				smtpAllowedHosts:    cmd.String("smtp-allowed-hosts"),
+				configFile:          cmd.String("config-file"),
+			}
+			forwardedAttachmentMaxSize, err := units.FromHumanSize(cmd.String("forwarded-attachment-max-size"))
+			if err != nil {
+				fmt.Printf("%s\n", err)
+				os.Exit(1)
+			}
+			forwardedAttachmentMaxPhotoSize, err := units.FromHumanSize(cmd.String("forwarded-attachment-max-photo-size"))
+			if err != nil {
+				fmt.Printf("%s\n", err)
+				os.Exit(1)
+			}
+			telegramConfig := &TelegramConfig{
+				telegramChatIDs:                  cmd.String("telegram-chat-ids"),
+				telegramBotToken:                 cmd.String("telegram-bot-token"),
+				telegramAPIPrefix:                cmd.String("telegram-api-prefix"),
+				telegramAPITimeoutSeconds:        cmd.Float64("telegram-api-timeout-seconds"),
+				messageTemplate:                  cmd.String("message-template"),
+				forwardedAttachmentMaxSize:       int(forwardedAttachmentMaxSize),
+				forwardedAttachmentMaxPhotoSize:  int(forwardedAttachmentMaxPhotoSize),
+				forwardedAttachmentRespectErrors: cmd.Bool("forwarded-attachment-respect-errors"),
+				messageLengthToSendAsFile:        uint(cmd.Uint("message-length-to-send-as-file")),
+			}
+			d, err := SMTPStart(smtpConfig, telegramConfig)
+			if err != nil {
+				panic(fmt.Sprintf("start error: %s", err))
+			}
+			sigHandler(&d)
+			return nil
 		},
 		Flags: []cli.Flag{
 			&cli.StringFlag{
