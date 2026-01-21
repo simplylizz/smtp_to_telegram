@@ -80,15 +80,15 @@ type SMTPConfig struct {
 }
 
 type TelegramConfig struct {
-	ChatIDs                      string
-	BotToken                     string
-	APIPrefix                    string
-	APITimeoutSeconds            float64
-	MessageTemplate              string
-	ForwardedAttachmentMaxSize      int
-	ForwardedAttachmentMaxPhotoSize int
+	ChatIDs                          string
+	BotToken                         string
+	APIPrefix                        string
+	APITimeoutSeconds                float64
+	MessageTemplate                  string
+	ForwardedAttachmentMaxSize       int
+	ForwardedAttachmentMaxPhotoSize  int
 	ForwardedAttachmentRespectErrors bool
-	MessageLengthToSendAsFile    uint
+	MessageLengthToSendAsFile        uint
 }
 
 type TelegramAPIMessageResult struct {
@@ -167,15 +167,15 @@ func main() {
 				return err
 			}
 			telegramConfig := &TelegramConfig{
-				ChatIDs:                   cmd.String("telegram-chat-ids"),
-				BotToken:                  cmd.String("telegram-bot-token"),
-				APIPrefix:                 cmd.String("telegram-api-prefix"),
-				APITimeoutSeconds:         cmd.Float64("telegram-api-timeout-seconds"),
-				MessageTemplate:           cmd.String("message-template"),
-				ForwardedAttachmentMaxSize:         int(forwardedAttachmentMaxSize),
-				ForwardedAttachmentMaxPhotoSize:    int(forwardedAttachmentMaxPhotoSize),
-				ForwardedAttachmentRespectErrors:   cmd.Bool("forwarded-attachment-respect-errors"),
-				MessageLengthToSendAsFile: cmd.Uint("message-length-to-send-as-file"),
+				ChatIDs:                          cmd.String("telegram-chat-ids"),
+				BotToken:                         cmd.String("telegram-bot-token"),
+				APIPrefix:                        cmd.String("telegram-api-prefix"),
+				APITimeoutSeconds:                cmd.Float64("telegram-api-timeout-seconds"),
+				MessageTemplate:                  cmd.String("message-template"),
+				ForwardedAttachmentMaxSize:       int(forwardedAttachmentMaxSize),
+				ForwardedAttachmentMaxPhotoSize:  int(forwardedAttachmentMaxPhotoSize),
+				ForwardedAttachmentRespectErrors: cmd.Bool("forwarded-attachment-respect-errors"),
+				MessageLengthToSendAsFile:        cmd.Uint("message-length-to-send-as-file"),
 			}
 			d, err := SMTPStart(smtpConfig, telegramConfig)
 			if err != nil {
@@ -905,7 +905,6 @@ func EscapeMultiLine(b []byte) string {
 func SanitizeBotToken(s, botToken string) string {
 	return strings.ReplaceAll(s, botToken, "***")
 }
-
 
 func awaitShutdown(ctx context.Context, d *guerrilla.Daemon) error {
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGINT)

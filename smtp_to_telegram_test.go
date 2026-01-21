@@ -35,14 +35,14 @@ func makeSMTPConfig() *SMTPConfig {
 
 func makeTelegramConfig() *TelegramConfig {
 	return &TelegramConfig{
-		ChatIDs:                   "42,142",
-		BotToken:                  "42:ZZZ",
-		APIPrefix:                 "http://" + testHTTPServerListen + "/",
-		MessageTemplate:           "From: {from}\\nTo: {to}\\nSubject: {subject}\\n\\n{body}\\n\\n{attachments_details}",
-		ForwardedAttachmentMaxSize:         0,
-		ForwardedAttachmentMaxPhotoSize:    0,
-		ForwardedAttachmentRespectErrors:   true,
-		MessageLengthToSendAsFile: 4095,
+		ChatIDs:                          "42,142",
+		BotToken:                         "42:ZZZ",
+		APIPrefix:                        "http://" + testHTTPServerListen + "/",
+		MessageTemplate:                  "From: {from}\\nTo: {to}\\nSubject: {subject}\\n\\n{body}\\n\\n{attachments_details}",
+		ForwardedAttachmentMaxSize:       0,
+		ForwardedAttachmentMaxPhotoSize:  0,
+		ForwardedAttachmentRespectErrors: true,
+		MessageLengthToSendAsFile:        4095,
 	}
 }
 
