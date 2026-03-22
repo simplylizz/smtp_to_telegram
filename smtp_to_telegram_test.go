@@ -38,7 +38,6 @@ func makeTelegramConfig() *TelegramConfig {
 		ChatIDs:                          "42,142",
 		BotToken:                         "42:ZZZ",
 		APIPrefix:                        "http://" + testHTTPServerListen + "/",
-		MessageTemplate:                  "From: {from}\\nTo: {to}\\nSubject: {subject}\\n\\n{body}\\n\\n{attachments_details}",
 		ForwardedAttachmentMaxSize:       0,
 		ForwardedAttachmentMaxPhotoSize:  0,
 		ForwardedAttachmentRespectErrors: true,
@@ -94,29 +93,6 @@ func TestSuccess(t *testing.T) {
 			"Subject: \n" +
 			"\n" +
 			"hi"
-
-	require.Equal(t, exp, h.RequestMessages[0])
-}
-
-func TestSuccessCustomFormat(t *testing.T) {
-	smtpConfig := makeSMTPConfig()
-	telegramConfig := makeTelegramConfig()
-	telegramConfig.MessageTemplate =
-		"Subject: {subject}\\n\\n{body}"
-	d := startSMTP(t, smtpConfig, telegramConfig)
-	defer d.Shutdown()
-
-	h := NewSuccessHandler()
-	s := HTTPServer(t, h)
-	defer func() { _ = s.Shutdown(context.Background()) }()
-
-	err := smtp.SendMail(smtpConfig.Listen, nil, "from@test", []string{"to@test"}, []byte(`hi`))
-	require.NoError(t, err)
-
-	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.ChatIDs, ",")))
-	exp := "Subject: \n" +
-		"\n" +
-		"hi"
 
 	require.Equal(t, exp, h.RequestMessages[0])
 }
@@ -674,6 +650,73 @@ QW5uYS1W6XJvbmlxdWUK
 			"\n" +
 			"Anna-Véronique"
 	require.Equal(t, exp, h.RequestMessages[0])
+}
+
+func TestCCAndReplyToInForwardedMessage(t *testing.T) {
+	smtpConfig := makeSMTPConfig()
+	telegramConfig := makeTelegramConfig()
+	d := startSMTP(t, smtpConfig, telegramConfig)
+	defer d.Shutdown()
+
+	h := NewSuccessHandler()
+	s := HTTPServer(t, h)
+	defer func() { _ = s.Shutdown(context.Background()) }()
+
+	m := gomail.NewMessage()
+	m.SetHeader("From", "from@test")
+	m.SetHeader("To", "to@test")
+	m.SetHeader("Cc", "cc1@test", "cc2@test")
+	m.SetHeader("Reply-To", "replyto@test")
+	m.SetHeader("Subject", "Test subj")
+	m.SetBody("text/plain", "Text body")
+
+	di := gomail.NewDialer(testSMTPListenHost, testSMTPListenPort, "", "")
+	err := di.DialAndSend(m)
+	require.NoError(t, err)
+
+	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.ChatIDs, ",")))
+	exp :=
+		"From: from@test\n" +
+			"To: to@test, cc1@test, cc2@test\n" +
+			"CC: cc1@test, cc2@test\n" +
+			"Reply-To: replyto@test\n" +
+			"Subject: Test subj\n" +
+			"\n" +
+			"Text body"
+	require.Equal(t, exp, h.RequestMessages[0])
+}
+
+func TestNoCCOrReplyToWhenEmpty(t *testing.T) {
+	smtpConfig := makeSMTPConfig()
+	telegramConfig := makeTelegramConfig()
+	d := startSMTP(t, smtpConfig, telegramConfig)
+	defer d.Shutdown()
+
+	h := NewSuccessHandler()
+	s := HTTPServer(t, h)
+	defer func() { _ = s.Shutdown(context.Background()) }()
+
+	m := gomail.NewMessage()
+	m.SetHeader("From", "from@test")
+	m.SetHeader("To", "to@test")
+	m.SetHeader("Subject", "Test subj")
+	m.SetBody("text/plain", "Text body")
+
+	di := gomail.NewDialer(testSMTPListenHost, testSMTPListenPort, "", "")
+	err := di.DialAndSend(m)
+	require.NoError(t, err)
+
+	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.ChatIDs, ",")))
+	exp :=
+		"From: from@test\n" +
+			"To: to@test\n" +
+			"Subject: Test subj\n" +
+			"\n" +
+			"Text body"
+	require.Equal(t, exp, h.RequestMessages[0])
+	// Verify CC and Reply-To lines are NOT present
+	require.NotContains(t, h.RequestMessages[0], "CC:")
+	require.NotContains(t, h.RequestMessages[0], "Reply-To:")
 }
 
 func HTTPServer(t *testing.T, handler http.Handler) *http.Server {

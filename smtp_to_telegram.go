@@ -84,7 +84,6 @@ type TelegramConfig struct {
 	BotToken                         string
 	APIPrefix                        string
 	APITimeoutSeconds                float64
-	MessageTemplate                  string
 	ForwardedAttachmentMaxSize       int
 	ForwardedAttachmentMaxPhotoSize  int
 	ForwardedAttachmentRespectErrors bool
@@ -104,6 +103,8 @@ type TelegramAPIMessage struct {
 type FormattedEmail struct {
 	From        string
 	To          string
+	CC          string
+	ReplyTo     string
 	Subject     string
 	Text        string
 	HTML        string
@@ -144,6 +145,11 @@ func main() {
 			if cmd.String("blacklist-file") != "" {
 				return errBlacklistFileDeprecate
 			}
+			if os.Getenv("ST_TELEGRAM_MESSAGE_TEMPLATE") != "" {
+				return errors.New("ST_TELEGRAM_MESSAGE_TEMPLATE is no longer supported. " +
+					"The message format is now fixed to support the reply-to-email feature. " +
+					"This check can be removed in 3.0.0 or later")
+			}
 			smtpPrimaryHost := cmd.String("smtp-primary-host")
 			if smtpPrimaryHost == "" {
 				smtpPrimaryHost, err = GetHostname()
@@ -171,7 +177,6 @@ func main() {
 				BotToken:                         cmd.String("telegram-bot-token"),
 				APIPrefix:                        cmd.String("telegram-api-prefix"),
 				APITimeoutSeconds:                cmd.Float64("telegram-api-timeout-seconds"),
-				MessageTemplate:                  cmd.String("message-template"),
 				ForwardedAttachmentMaxSize:       int(forwardedAttachmentMaxSize),
 				ForwardedAttachmentMaxPhotoSize:  int(forwardedAttachmentMaxPhotoSize),
 				ForwardedAttachmentRespectErrors: cmd.Bool("forwarded-attachment-respect-errors"),
@@ -235,12 +240,6 @@ func main() {
 				Usage:   "Telegram: API url prefix",
 				Value:   "https://api.telegram.org/",
 				Sources: cli.EnvVars("ST_TELEGRAM_API_PREFIX"),
-			},
-			&cli.StringFlag{
-				Name:    "message-template",
-				Usage:   "Telegram message template",
-				Value:   "From: {from}\\nTo: {to}\\nSubject: {subject}\\n\\n{body}\\n\\n{attachments_details}",
-				Sources: cli.EnvVars("ST_TELEGRAM_MESSAGE_TEMPLATE"),
 			},
 			&cli.Float64Flag{
 				Name:    "telegram-api-timeout-seconds",
@@ -759,6 +758,8 @@ func FormatEmail(envelope *mail.Envelope, telegramConfig *TelegramConfig) (*Form
 	from := envelope.MailFrom.String()
 	to := JoinEmailAddresses(envelope.RcptTo)
 	subject := env.GetHeader("subject")
+	cc := env.GetHeader("Cc")
+	replyTo := env.GetHeader("Reply-To")
 	html := env.HTML
 
 	fullMessageText, truncatedMessageText := FormatMessage(
@@ -766,13 +767,17 @@ func FormatEmail(envelope *mail.Envelope, telegramConfig *TelegramConfig) (*Form
 		to,
 		subject,
 		text,
+		cc,
+		replyTo,
 		formattedAttachmentsDetails,
-		telegramConfig,
+		telegramConfig.MessageLengthToSendAsFile,
 	)
 	if truncatedMessageText == "" { // no need to truncate
 		return &FormattedEmail{
 			From:        from,
 			To:          to,
+			CC:          cc,
+			ReplyTo:     replyTo,
 			Subject:     subject,
 			Text:        fullMessageText,
 			HTML:        html,
@@ -798,6 +803,8 @@ func FormatEmail(envelope *mail.Envelope, telegramConfig *TelegramConfig) (*Form
 	return &FormattedEmail{
 		From:        from,
 		To:          to,
+		CC:          cc,
+		ReplyTo:     replyTo,
 		Subject:     subject,
 		Text:        truncatedMessageText,
 		HTML:        html,
@@ -807,55 +814,59 @@ func FormatEmail(envelope *mail.Envelope, telegramConfig *TelegramConfig) (*Form
 
 func FormatMessage(
 	from, to, subject, text string,
+	cc, replyTo string,
 	formattedAttachmentsDetails string,
-	telegramConfig *TelegramConfig,
+	messageLengthToSendAsFile uint,
 ) (fullMessageText, truncatedMessageText string) {
-	fullMessageText = strings.TrimSpace(
-		strings.NewReplacer(
-			"\\n", "\n",
-			"{from}", from,
-			"{to}", to,
-			"{subject}", subject,
-			"{body}", strings.TrimSpace(text),
-			"{attachments_details}", formattedAttachmentsDetails,
-		).Replace(telegramConfig.MessageTemplate),
-	)
+	buildHeader := func() string {
+		var hdr strings.Builder
+		fmt.Fprintf(&hdr, "From: %s\n", from)
+		fmt.Fprintf(&hdr, "To: %s\n", to)
+		if strings.TrimSpace(cc) != "" {
+			fmt.Fprintf(&hdr, "CC: %s\n", cc)
+		}
+		if strings.TrimSpace(replyTo) != "" {
+			fmt.Fprintf(&hdr, "Reply-To: %s\n", replyTo)
+		}
+		fmt.Fprintf(&hdr, "Subject: %s", subject)
+		return hdr.String()
+	}
+
+	buildMessage := func(body string) string {
+		header := buildHeader()
+		var sb strings.Builder
+		sb.WriteString(header)
+		sb.WriteString("\n\n")
+		sb.WriteString(body)
+		if formattedAttachmentsDetails != "" {
+			sb.WriteString("\n\n")
+			sb.WriteString(formattedAttachmentsDetails)
+		}
+		return strings.TrimSpace(sb.String())
+	}
+
+	trimmedText := strings.TrimSpace(text)
+	fullMessageText = buildMessage(trimmedText)
+
 	fullMessageRunes := []rune(fullMessageText)
-	if uint(len(fullMessageRunes)) <= telegramConfig.MessageLengthToSendAsFile {
+	if uint(len(fullMessageRunes)) <= messageLengthToSendAsFile {
 		// No need to truncate
 		return fullMessageText, ""
 	}
 
-	emptyMessageText := strings.TrimSpace(
-		strings.NewReplacer(
-			"\\n", "\n",
-			"{from}", from,
-			"{to}", to,
-			"{subject}", subject,
-			"{body}", strings.TrimSpace(fmt.Sprintf(".%s", BodyTruncated)),
-			"{attachments_details}", formattedAttachmentsDetails,
-		).Replace(telegramConfig.MessageTemplate),
-	)
+	emptyMessageText := buildMessage(strings.TrimSpace(fmt.Sprintf(".%s", BodyTruncated)))
 	emptyMessageRunes := []rune(emptyMessageText)
-	if uint(len(emptyMessageRunes)) >= telegramConfig.MessageLengthToSendAsFile {
+	if uint(len(emptyMessageRunes)) >= messageLengthToSendAsFile {
 		// Impossible to truncate properly
-		return fullMessageText, string(fullMessageRunes[:telegramConfig.MessageLengthToSendAsFile])
+		return fullMessageText, string(fullMessageRunes[:messageLengthToSendAsFile])
 	}
 
-	maxBodyLength := telegramConfig.MessageLengthToSendAsFile - uint(len(emptyMessageRunes))
-	truncatedMessageText = strings.TrimSpace(
-		strings.NewReplacer(
-			"\\n", "\n",
-			"{from}", from,
-			"{to}", to,
-			"{subject}", subject,
-			// TODO cut by paragraphs + respect formatting
-			"{body}", strings.TrimSpace(fmt.Sprintf("%s%s",
-				string([]rune(strings.TrimSpace(text))[:maxBodyLength]), BodyTruncated)),
-			"{attachments_details}", formattedAttachmentsDetails,
-		).Replace(telegramConfig.MessageTemplate),
-	)
-	if uint(len([]rune(truncatedMessageText))) > telegramConfig.MessageLengthToSendAsFile {
+	maxBodyLength := messageLengthToSendAsFile - uint(len(emptyMessageRunes))
+	// TODO cut by paragraphs + respect formatting
+	truncatedBody := strings.TrimSpace(fmt.Sprintf("%s%s",
+		string([]rune(trimmedText)[:maxBodyLength]), BodyTruncated))
+	truncatedMessageText = buildMessage(truncatedBody)
+	if uint(len([]rune(truncatedMessageText))) > messageLengthToSendAsFile {
 		panic(fmt.Errorf("%w: maxBodyLength=%d, text=%s", errUnexpectedTruncation, maxBodyLength, truncatedMessageText))
 	}
 	return fullMessageText, truncatedMessageText
