@@ -94,6 +94,7 @@ type TelegramConfig struct {
 	ForwardedAttachmentMaxPhotoSize  int
 	ForwardedAttachmentRespectErrors bool
 	MessageLengthToSendAsFile        uint
+	ForceReply                       bool
 }
 
 type TelegramAPIMessageResult struct {
@@ -600,6 +601,9 @@ func SendMessageToChat(
 		telegramConfig.BotToken,
 	)
 	formData := url.Values{"chat_id": {chatID}, "text": {message.Text}}
+	if telegramConfig.ForceReply {
+		formData.Set("reply_markup", `{"force_reply":true,"selective":true}`)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, strings.NewReader(formData.Encode()))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)

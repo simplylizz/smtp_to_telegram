@@ -739,14 +739,16 @@ func HTTPServer(t *testing.T, handler http.Handler) *http.Server {
 }
 
 type SuccessHandler struct {
-	RequestMessages  []string
-	RequestDocuments []*FormattedAttachment
+	RequestMessages    []string
+	RequestDocuments   []*FormattedAttachment
+	RequestReplyMarkups []string
 }
 
 func NewSuccessHandler() *SuccessHandler {
 	return &SuccessHandler{
-		RequestMessages:  []string{},
-		RequestDocuments: []*FormattedAttachment{},
+		RequestMessages:    []string{},
+		RequestDocuments:   []*FormattedAttachment{},
+		RequestReplyMarkups: []string{},
 	}
 }
 
@@ -759,6 +761,7 @@ func (s *SuccessHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			panic(err)
 		}
 		s.RequestMessages = append(s.RequestMessages, r.PostForm.Get("text"))
+		s.RequestReplyMarkups = append(s.RequestReplyMarkups, r.PostForm.Get("reply_markup"))
 		return
 	}
 	isSendDocument := strings.Contains(r.URL.Path, "sendDocument")
@@ -1353,4 +1356,54 @@ func TestNonFilteredEmailPasses(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.ChatIDs, ",")))
+}
+
+func TestForceReplyIncludedWhenEnabled(t *testing.T) {
+	smtpConfig := makeSMTPConfig()
+	telegramConfig := makeTelegramConfig()
+	telegramConfig.ForceReply = true
+	d := startSMTP(t, smtpConfig, telegramConfig)
+	defer d.Shutdown()
+
+	h := NewSuccessHandler()
+	s := HTTPServer(t, h)
+	defer func() { _ = s.Shutdown(context.Background()) }()
+
+	m := gomail.NewMessage()
+	m.SetHeader("From", "from@test")
+	m.SetHeader("To", "to@test")
+	m.SetHeader("Subject", "Test subj")
+	m.SetBody("text/plain", "Text body")
+
+	di := gomail.NewDialer(testSMTPListenHost, testSMTPListenPort, "", "")
+	err := di.DialAndSend(m)
+	require.NoError(t, err)
+
+	require.NotEmpty(t, h.RequestReplyMarkups)
+	require.Contains(t, h.RequestReplyMarkups[0], "force_reply")
+}
+
+func TestForceReplyNotIncludedWhenDisabled(t *testing.T) {
+	smtpConfig := makeSMTPConfig()
+	telegramConfig := makeTelegramConfig()
+	// ForceReply defaults to false
+	d := startSMTP(t, smtpConfig, telegramConfig)
+	defer d.Shutdown()
+
+	h := NewSuccessHandler()
+	s := HTTPServer(t, h)
+	defer func() { _ = s.Shutdown(context.Background()) }()
+
+	m := gomail.NewMessage()
+	m.SetHeader("From", "from@test")
+	m.SetHeader("To", "to@test")
+	m.SetHeader("Subject", "Test subj")
+	m.SetBody("text/plain", "Text body")
+
+	di := gomail.NewDialer(testSMTPListenHost, testSMTPListenPort, "", "")
+	err := di.DialAndSend(m)
+	require.NoError(t, err)
+
+	require.NotEmpty(t, h.RequestReplyMarkups)
+	require.Equal(t, "", h.RequestReplyMarkups[0])
 }
