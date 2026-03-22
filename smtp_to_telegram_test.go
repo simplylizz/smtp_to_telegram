@@ -47,6 +47,10 @@ func makeTelegramConfig() *TelegramConfig {
 
 func startSMTP(t *testing.T, smtpConfig *SMTPConfig, telegramConfig *TelegramConfig) guerrilla.Daemon {
 	t.Helper()
+	_, err := loadConfig(smtpConfig.ConfigFile)
+	if err != nil {
+		t.Fatalf("load config error: %s", err)
+	}
 	d, err := SMTPStart(smtpConfig, telegramConfig)
 	if err != nil {
 		t.Fatalf("start error: %s", err)
@@ -837,7 +841,7 @@ func TestLoadFilterRules(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tmpfile.Close())
 
-	err = loadFilterRules(tmpfile.Name())
+	_, err = loadConfig(tmpfile.Name())
 	require.NoError(t, err)
 	require.Len(t, filterRules, 2)
 	require.Equal(t, "block-spam", filterRules[0].Name)
@@ -846,13 +850,13 @@ func TestLoadFilterRules(t *testing.T) {
 }
 
 func TestLoadFilterRulesEmptyFilename(t *testing.T) {
-	err := loadFilterRules("")
+	_, err := loadConfig("")
 	require.NoError(t, err)
 	require.Nil(t, filterRules)
 }
 
 func TestLoadFilterRulesNonExistentFile(t *testing.T) {
-	err := loadFilterRules("/non/existent/file.yaml")
+	_, err := loadConfig("/non/existent/file.yaml")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to read config file")
 }
@@ -873,7 +877,7 @@ func TestLoadFilterRulesInvalidRegex(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tmpfile.Close())
 
-	err = loadFilterRules(tmpfile.Name())
+	_, err = loadConfig(tmpfile.Name())
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid regex pattern")
 }
@@ -894,7 +898,7 @@ func TestLoadFilterRulesInvalidField(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tmpfile.Close())
 
-	err = loadFilterRules(tmpfile.Name())
+	_, err = loadConfig(tmpfile.Name())
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid field 'subjekt'")
 }
@@ -916,7 +920,7 @@ func TestLoadFilterRulesInvalidMatchType(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tmpfile.Close())
 
-	err = loadFilterRules(tmpfile.Name())
+	_, err = loadConfig(tmpfile.Name())
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid match type")
 }
@@ -940,7 +944,7 @@ func TestFilterRulesMatchAll(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tmpfile.Close())
 
-	err = loadFilterRules(tmpfile.Name())
+	_, err = loadConfig(tmpfile.Name())
 	require.NoError(t, err)
 
 	// Both conditions match - should reject (case-insensitive)
@@ -982,7 +986,7 @@ func TestFilterRulesMatchAny(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tmpfile.Close())
 
-	err = loadFilterRules(tmpfile.Name())
+	_, err = loadConfig(tmpfile.Name())
 	require.NoError(t, err)
 
 	// First condition matches - should reject
@@ -1039,7 +1043,7 @@ func TestFilterRulesFieldMatching(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tmpfile.Close())
 
-	err = loadFilterRules(tmpfile.Name())
+	_, err = loadConfig(tmpfile.Name())
 	require.NoError(t, err)
 
 	// Test from field
@@ -1088,7 +1092,7 @@ func TestFilterRulesBodyOrHtml(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tmpfile.Close())
 
-	err = loadFilterRules(tmpfile.Name())
+	_, err = loadConfig(tmpfile.Name())
 	require.NoError(t, err)
 
 	// Pattern in body only - should reject
@@ -1127,7 +1131,7 @@ func TestFilterRulesHtmlOnlyEmail(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tmpfile.Close())
 
-	err = loadFilterRules(tmpfile.Name())
+	_, err = loadConfig(tmpfile.Name())
 	require.NoError(t, err)
 
 	// URL only in HTML - should reject
@@ -1160,7 +1164,7 @@ func TestFilterRulesFirstMatchWins(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tmpfile.Close())
 
-	err = loadFilterRules(tmpfile.Name())
+	_, err = loadConfig(tmpfile.Name())
 	require.NoError(t, err)
 
 	// Both rules would match, but first wins
@@ -1185,7 +1189,7 @@ func TestFilterRulesCaseInsensitive(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tmpfile.Close())
 
-	err = loadFilterRules(tmpfile.Name())
+	_, err = loadConfig(tmpfile.Name())
 	require.NoError(t, err)
 
 	// Pattern is lowercase, but should match uppercase
@@ -1222,7 +1226,7 @@ func TestFilterRulesEmptyConditions(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tmpfile.Close())
 
-	err = loadFilterRules(tmpfile.Name())
+	_, err = loadConfig(tmpfile.Name())
 	require.NoError(t, err)
 
 	// Empty conditions should not match
@@ -1231,13 +1235,9 @@ func TestFilterRulesEmptyConditions(t *testing.T) {
 }
 
 func TestSMTPStartWithNonExistentFilterRulesFile(t *testing.T) {
-	smtpConfig := makeSMTPConfig()
-	smtpConfig.ConfigFile = "/non/existent/filter_rules.yaml"
-	telegramConfig := makeTelegramConfig()
-
-	_, err := SMTPStart(smtpConfig, telegramConfig)
+	_, err := loadConfig("/non/existent/filter_rules.yaml")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "failed to load config")
+	require.Contains(t, err.Error(), "failed to read config file")
 }
 
 func TestFilteredEmailReturns554(t *testing.T) {

@@ -63,8 +63,14 @@ type FilterRule struct {
 	Conditions []FilterCondition `yaml:"conditions"`
 }
 
-type FilterConfig struct {
+type AppConfig struct {
 	FilterRules []FilterRule `yaml:"filter_rules"`
+	SMTPOut     struct {
+		Host     string `yaml:"host"`
+		Port     int    `yaml:"port"`
+		Username string `yaml:"username"`
+		Password string `yaml:"password"`
+	} `yaml:"smtp_out"`
 }
 
 const (
@@ -182,6 +188,34 @@ func main() {
 				ForwardedAttachmentRespectErrors: cmd.Bool("forwarded-attachment-respect-errors"),
 				MessageLengthToSendAsFile:        cmd.Uint("message-length-to-send-as-file"),
 			}
+
+			yamlSMTPOut, err := loadConfig(smtpConfig.ConfigFile)
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+
+			smtpOutConfig := &SMTPOutConfig{
+				Host:     cmd.String("smtp-out-host"),
+				Port:     int(cmd.Int("smtp-out-port")),
+				Username: cmd.String("smtp-out-username"),
+				Password: cmd.String("smtp-out-password"),
+			}
+			if yamlSMTPOut != nil {
+				if smtpOutConfig.Host == "" {
+					smtpOutConfig.Host = yamlSMTPOut.Host
+				}
+				if smtpOutConfig.Port == 587 && yamlSMTPOut.Port != 0 {
+					smtpOutConfig.Port = yamlSMTPOut.Port
+				}
+				if smtpOutConfig.Username == "" {
+					smtpOutConfig.Username = yamlSMTPOut.Username
+				}
+				if smtpOutConfig.Password == "" {
+					smtpOutConfig.Password = yamlSMTPOut.Password
+				}
+			}
+			_ = smtpOutConfig // will be used by reply-to-email feature
+
 			d, err := SMTPStart(smtpConfig, telegramConfig)
 			if err != nil {
 				return fmt.Errorf("start error: %w", err)
@@ -279,6 +313,27 @@ func main() {
 				Value:   4095,
 				Sources: cli.EnvVars("ST_MESSAGE_LENGTH_TO_SEND_AS_FILE"),
 			},
+			&cli.StringFlag{
+				Name:    "smtp-out-host",
+				Usage:   "Outbound SMTP server host for reply-to-email feature",
+				Sources: cli.EnvVars("ST_SMTP_OUT_HOST"),
+			},
+			&cli.IntFlag{
+				Name:    "smtp-out-port",
+				Usage:   "Outbound SMTP server port",
+				Value:   587,
+				Sources: cli.EnvVars("ST_SMTP_OUT_PORT"),
+			},
+			&cli.StringFlag{
+				Name:    "smtp-out-username",
+				Usage:   "Outbound SMTP server username",
+				Sources: cli.EnvVars("ST_SMTP_OUT_USERNAME"),
+			},
+			&cli.StringFlag{
+				Name:    "smtp-out-password",
+				Usage:   "Outbound SMTP server password",
+				Sources: cli.EnvVars("ST_SMTP_OUT_PASSWORD"),
+			},
 		},
 	}
 	err := cmd.Run(context.Background(), os.Args)
@@ -298,21 +353,21 @@ func getAllowedHosts(smtpConfig *SMTPConfig) []string {
 	return allowedHosts
 }
 
-func loadFilterRules(filename string) error {
+func loadConfig(filename string) (*SMTPOutConfig, error) {
 	filterRules = nil
 
 	if filename == "" {
-		return nil
+		return nil, nil
 	}
 
 	data, err := os.ReadFile(filename) //nolint:gosec // User-specified config file path is intentional
 	if err != nil {
-		return fmt.Errorf("failed to read config file: %w", err)
+		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
 
-	var config FilterConfig
+	var config AppConfig
 	if err := yaml.Unmarshal(data, &config); err != nil {
-		return fmt.Errorf("failed to parse config YAML: %w", err)
+		return nil, fmt.Errorf("failed to parse config YAML: %w", err)
 	}
 
 	// Compile regex patterns
@@ -323,12 +378,12 @@ func loadFilterRules(filename string) error {
 			rule.Match = "all"
 		}
 		if rule.Match != "all" && rule.Match != "any" {
-			return fmt.Errorf("rule '%s': %w '%s' (must be 'all' or 'any')", rule.Name, errInvalidMatchType, rule.Match)
+			return nil, fmt.Errorf("rule '%s': %w '%s' (must be 'all' or 'any')", rule.Name, errInvalidMatchType, rule.Match)
 		}
 		for j := range rule.Conditions {
 			cond := &rule.Conditions[j]
 			if !isValidFilterField(cond.Field) {
-				return fmt.Errorf("rule '%s': %w '%s' (must be one of: from, to, subject, body, html, body_or_html)", rule.Name, errInvalidField, cond.Field)
+				return nil, fmt.Errorf("rule '%s': %w '%s' (must be one of: from, to, subject, body, html, body_or_html)", rule.Name, errInvalidField, cond.Field)
 			}
 			// Make pattern case-insensitive
 			pattern := cond.Pattern
@@ -337,7 +392,7 @@ func loadFilterRules(filename string) error {
 			}
 			compiled, err := regexp.Compile(pattern)
 			if err != nil {
-				return fmt.Errorf("rule '%s': invalid regex pattern '%s': %w", rule.Name, cond.Pattern, err)
+				return nil, fmt.Errorf("rule '%s': invalid regex pattern '%s': %w", rule.Name, cond.Pattern, err)
 			}
 			cond.regex = compiled
 		}
@@ -348,7 +403,18 @@ func loadFilterRules(filename string) error {
 	if logger != nil {
 		logger.Infof("Loaded %d filter rules from %s", len(filterRules), filename)
 	}
-	return nil
+
+	var yamlSMTPOut *SMTPOutConfig
+	if config.SMTPOut.Host != "" {
+		yamlSMTPOut = &SMTPOutConfig{
+			Host:     config.SMTPOut.Host,
+			Port:     config.SMTPOut.Port,
+			Username: config.SMTPOut.Username,
+			Password: config.SMTPOut.Password,
+		}
+	}
+
+	return yamlSMTPOut, nil
 }
 
 func isValidFilterField(field string) bool {
@@ -448,10 +514,6 @@ func SMTPStart(
 	daemon.AddProcessor("TelegramBot", TelegramBotProcessorFactory(telegramConfig))
 
 	logger = daemon.Log()
-
-	if err := loadFilterRules(smtpConfig.ConfigFile); err != nil {
-		return daemon, fmt.Errorf("failed to load config: %w", err)
-	}
 
 	err := daemon.Start()
 	return daemon, err
