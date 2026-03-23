@@ -11,7 +11,9 @@
 Forked from [KostyaEsmukov/smtp_to_telegram](https://github.com/KostyaEsmukov/smtp_to_telegram) package.
 
 `smtp_to_telegram` is a small program which listens for SMTP and sends
-all incoming Email messages to Telegram.
+all incoming Email messages to Telegram. It also supports bidirectional
+communication: you can reply to a forwarded Telegram message to send an
+email back to the original sender.
 
 Say you have a software which can send Email notifications via SMTP.
 You may use `smtp_to_telegram` as an SMTP server so
@@ -35,20 +37,61 @@ docker compose up
 You may use `localhost:25` as the target SMTP address.
 No TLS or authentication is required.
 
-The default Telegram message format is:
+The Telegram message format is:
 
 ```
-From: {from}\\nTo: {to}\\nSubject: {subject}\\n\\n{body}\\n\\n{attachments_details}
+From: {from}
+To: {to}
+CC: {cc}
+Reply-To: {reply_to}
+Subject: {subject}
+
+{body}
+
+{attachments_details}
 ```
 
-A custom format might be specified as well:
+The `CC` and `Reply-To` lines are only shown when present. Custom message
+templates are no longer supported (breaking change in v2).
 
+## Reply to Email
+
+When an email is forwarded to Telegram, the bot uses Telegram's ForceReply
+feature to prompt you to reply. If you reply to that message in Telegram,
+the bot will send your reply as an email back to the original sender.
+
+### How it works
+
+1. An incoming email is forwarded to your Telegram chat.
+2. The bot sends the message with ForceReply enabled, prompting you to reply.
+3. You write a reply in Telegram.
+4. The bot sends your reply as an email to the original sender's address.
+
+### Configuration
+
+To enable the reply feature, configure outbound SMTP via environment variables:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `ST_SMTP_OUT_HOST` | Outbound SMTP server hostname (required to enable replies) | — |
+| `ST_SMTP_OUT_PORT` | Outbound SMTP server port | `587` |
+| `ST_SMTP_OUT_USERNAME` | SMTP authentication username | — |
+| `ST_SMTP_OUT_PASSWORD` | SMTP authentication password | — |
+
+Or via the YAML config file (see [Configuration File](#configuration-file)):
+
+```yaml
+smtp_out:
+  host: smtp.example.com
+  port: 587
+  username: user@example.com
+  password: secret
 ```
-ST_TELEGRAM_CHAT_IDS=<CHAT_ID1>,<CHAT_ID2>
-ST_TELEGRAM_BOT_TOKEN=<BOT_TOKEN>
-ST_TELEGRAM_MESSAGE_TEMPLATE="Subject: {subject}\\n\\n{body}"
-ST_SMTP_ALLOWED_HOSTS=cvzilla.net,example.com
-```
+
+### Limitations
+
+- If the original email had multiple `To:` addresses, the first address is
+  used as the sender address for the reply.
 
 ## Development
 
@@ -61,7 +104,9 @@ pre-commit install
 
 ## Configuration File
 
-You can define filter rules in a YAML configuration file. Rules match against email fields (from, to, subject, body, html) using regex patterns and reject emails that match.
+You can define filter rules and outbound SMTP settings in a YAML configuration
+file. Rules match against email fields (from, to, subject, body, html) using
+regex patterns and reject emails that match.
 
 ### Setup
 
@@ -78,6 +123,12 @@ Or use the command line flag:
 ### Example Configuration
 
 ```yaml
+smtp_out:
+  host: smtp.example.com
+  port: 587
+  username: user@example.com
+  password: secret
+
 filter_rules:
   # Simple rule: single condition
   - name: block-adnxs-tracking
