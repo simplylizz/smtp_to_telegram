@@ -215,13 +215,20 @@ func main() {
 					smtpOutConfig.Password = yamlSMTPOut.Password
 				}
 			}
-			_ = smtpOutConfig // will be used by reply-to-email feature
-
 			d, err := SMTPStart(smtpConfig, telegramConfig)
 			if err != nil {
 				return fmt.Errorf("start error: %w", err)
 			}
-			return awaitShutdown(ctx, &d)
+
+			var cancelPolling context.CancelFunc
+			if smtpOutConfig.IsConfigured() {
+				telegramConfig.ForceReply = true
+				pollCtx, cancel := context.WithCancel(context.Background())
+				cancelPolling = cancel
+				go PollTelegramUpdates(pollCtx, telegramConfig, smtpOutConfig)
+			}
+
+			return awaitShutdown(ctx, &d, cancelPolling)
 		},
 		Flags: []cli.Flag{
 			&cli.StringFlag{
@@ -983,14 +990,19 @@ func SanitizeBotToken(s, botToken string) string {
 	return strings.ReplaceAll(s, botToken, "***")
 }
 
-func awaitShutdown(ctx context.Context, d *guerrilla.Daemon) error {
+func awaitShutdown(ctx context.Context, d *guerrilla.Daemon, cancelPolling context.CancelFunc) error {
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGINT)
 	defer stop()
 
 	<-ctx.Done()
 	logger.Info("Shutdown signal caught")
 
-	// Graceful shutdown with timeout
+	// Stop polling first
+	if cancelPolling != nil {
+		cancelPolling()
+	}
+
+	// Graceful shutdown of SMTP with timeout
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
