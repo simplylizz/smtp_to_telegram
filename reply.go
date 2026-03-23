@@ -3,6 +3,8 @@ package main
 import (
 	"errors"
 	"strings"
+
+	"gopkg.in/gomail.v2"
 )
 
 // SMTPOutConfig holds configuration for outbound SMTP (reply-to-email feature).
@@ -103,4 +105,26 @@ func splitAddresses(s string) []string {
 		}
 	}
 	return result
+}
+
+// SendReplyEmail sends a reply email via SMTP using the given configuration.
+func SendReplyEmail(
+	config *SMTPOutConfig,
+	from string,
+	to []string,
+	cc []string,
+	subject string,
+	body string,
+) error {
+	m := gomail.NewMessage()
+	m.SetHeader("From", from)
+	m.SetHeader("To", to...)
+	if len(cc) > 0 {
+		m.SetHeader("Cc", cc...)
+	}
+	m.SetHeader("Subject", subject)
+	m.SetBody("text/plain", body)
+
+	d := gomail.NewDialer(config.Host, config.Port, config.Username, config.Password)
+	return d.DialAndSend(m)
 }

@@ -1,6 +1,11 @@
 package main
 
 import (
+	"bufio"
+	"fmt"
+	"net"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -119,4 +124,86 @@ func TestComposeReplyAddresses(t *testing.T) {
 			require.Equal(t, tt.wantSubject, subject)
 		})
 	}
+}
+
+type testEmail struct {
+	from string
+	to   []string
+	data string
+}
+
+// runTestSMTPServer accepts a single SMTP connection and captures the message.
+func runTestSMTPServer(t *testing.T, ln net.Listener, received chan<- testEmail) {
+	t.Helper()
+	conn, err := ln.Accept()
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+
+	write := func(s string) { fmt.Fprintf(conn, "%s\r\n", s) }
+	scanner := bufio.NewScanner(conn)
+
+	var email testEmail
+	write("220 test SMTP server ready")
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		switch {
+		case strings.HasPrefix(line, "EHLO") || strings.HasPrefix(line, "HELO"):
+			write("250-test Hello")
+			write("250 OK")
+		case strings.HasPrefix(line, "MAIL FROM:"):
+			email.from = strings.TrimSpace(strings.TrimPrefix(line, "MAIL FROM:"))
+			email.from = strings.Trim(email.from, "<>")
+			write("250 OK")
+		case strings.HasPrefix(line, "RCPT TO:"):
+			addr := strings.TrimSpace(strings.TrimPrefix(line, "RCPT TO:"))
+			addr = strings.Trim(addr, "<>")
+			email.to = append(email.to, addr)
+			write("250 OK")
+		case strings.HasPrefix(line, "DATA"):
+			write("354 Start mail input")
+			var data strings.Builder
+			for scanner.Scan() {
+				dataLine := scanner.Text()
+				if dataLine == "." {
+					break
+				}
+				data.WriteString(dataLine)
+				data.WriteString("\n")
+			}
+			email.data = data.String()
+			write("250 OK")
+		case strings.HasPrefix(line, "QUIT"):
+			write("221 Bye")
+			received <- email
+			return
+		default:
+			write("250 OK")
+		}
+	}
+}
+
+func TestSendReplyEmail(t *testing.T) {
+	received := make(chan testEmail, 1)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer ln.Close()
+	go runTestSMTPServer(t, ln, received)
+
+	addr := ln.Addr().String()
+	host, portStr, _ := net.SplitHostPort(addr)
+	port, _ := strconv.Atoi(portStr)
+
+	config := &SMTPOutConfig{Host: host, Port: port}
+
+	err = SendReplyEmail(config, "me@test", []string{"sender@test"}, nil, "Re: Hello", "Thanks!")
+	require.NoError(t, err)
+
+	msg := <-received
+	require.Equal(t, "me@test", msg.from)
+	require.Contains(t, msg.to, "sender@test")
+	require.Contains(t, msg.data, "Re: Hello")
+	require.Contains(t, msg.data, "Thanks!")
 }
