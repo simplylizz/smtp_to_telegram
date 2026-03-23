@@ -185,6 +185,22 @@ func runTestSMTPServer(t *testing.T, ln net.Listener, received chan<- testEmail)
 	}
 }
 
+func makeBotReplyUpdate(replyFromID int64, originalText, replyText string) TelegramUpdate {
+	return TelegramUpdate{
+		UpdateID: 1,
+		Message: &TelegramUpdateMessage{
+			MessageID: 100,
+			Chat:      TelegramChat{ID: 42},
+			Text:      replyText,
+			ReplyToMessage: &TelegramReplyMessage{
+				MessageID: 50,
+				From:      &TelegramUser{ID: replyFromID, IsBot: true},
+				Text:      originalText,
+			},
+		},
+	}
+}
+
 func TestSendReplyEmail(t *testing.T) {
 	received := make(chan testEmail, 1)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -206,4 +222,65 @@ func TestSendReplyEmail(t *testing.T) {
 	require.Contains(t, msg.to, "sender@test")
 	require.Contains(t, msg.data, "Re: Hello")
 	require.Contains(t, msg.data, "Thanks!")
+}
+
+func TestHandleTelegramReply_Success(t *testing.T) {
+	received := make(chan testEmail, 1)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer ln.Close()
+	go runTestSMTPServer(t, ln, received)
+
+	addr := ln.Addr().String()
+	host, portStr, _ := net.SplitHostPort(addr)
+	port, _ := strconv.Atoi(portStr)
+
+	config := &SMTPOutConfig{Host: host, Port: port}
+	originalText := "From: sender@test\nTo: me@test\nSubject: Hello\n\nOriginal body"
+	update := makeBotReplyUpdate(999, originalText, "My reply")
+
+	notification, err := HandleTelegramReply(update, config, 999)
+	require.NoError(t, err)
+	require.Contains(t, notification, "Email sent from me@test to sender@test")
+
+	msg := <-received
+	require.Equal(t, "me@test", msg.from)
+	require.Contains(t, msg.to, "sender@test")
+	require.Contains(t, msg.data, "My reply")
+}
+
+func TestHandleTelegramReply_NonBotMessage_Ignored(t *testing.T) {
+	update := makeBotReplyUpdate(888, "From: sender@test\nTo: me@test\nSubject: Hello\n\nBody", "Reply text")
+	config := &SMTPOutConfig{Host: "localhost", Port: 25}
+
+	notification, err := HandleTelegramReply(update, config, 999)
+	require.NoError(t, err)
+	require.Empty(t, notification)
+}
+
+func TestHandleTelegramReply_SMTPNotConfigured(t *testing.T) {
+	update := makeBotReplyUpdate(999, "From: sender@test\nTo: me@test\nSubject: Hello\n\nBody", "Reply text")
+	config := &SMTPOutConfig{Host: "", Port: 0}
+
+	notification, err := HandleTelegramReply(update, config, 999)
+	require.NoError(t, err)
+	require.Contains(t, notification, "not configured")
+}
+
+func TestHandleTelegramReply_ParseFailure(t *testing.T) {
+	update := makeBotReplyUpdate(999, "just some random text", "Reply text")
+	config := &SMTPOutConfig{Host: "localhost", Port: 25}
+
+	notification, err := HandleTelegramReply(update, config, 999)
+	require.NoError(t, err)
+	require.Contains(t, notification, "Could not parse")
+}
+
+func TestHandleTelegramReply_SMTPSendFailure(t *testing.T) {
+	update := makeBotReplyUpdate(999, "From: sender@test\nTo: me@test\nSubject: Hello\n\nBody", "Reply text")
+	config := &SMTPOutConfig{Host: "127.0.0.1", Port: 19999}
+
+	notification, err := HandleTelegramReply(update, config, 999)
+	require.NoError(t, err)
+	require.Contains(t, notification, "Failed to send email")
 }

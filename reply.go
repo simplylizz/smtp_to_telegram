@@ -2,10 +2,52 @@ package main
 
 import (
 	"errors"
+	"fmt"
+	"slices"
 	"strings"
 
 	"gopkg.in/gomail.v2"
 )
+
+// Telegram update types for processing replies.
+
+type TelegramUpdate struct {
+	UpdateID int                    `json:"update_id"`
+	Message  *TelegramUpdateMessage `json:"message"`
+}
+
+type TelegramUpdateMessage struct {
+	MessageID      int                   `json:"message_id"`
+	Chat           TelegramChat          `json:"chat"`
+	Text           string                `json:"text"`
+	From           *TelegramUser         `json:"from"`
+	ReplyToMessage *TelegramReplyMessage `json:"reply_to_message"`
+}
+
+type TelegramReplyMessage struct {
+	MessageID int           `json:"message_id"`
+	From      *TelegramUser `json:"from"`
+	Text      string        `json:"text"`
+}
+
+type TelegramChat struct {
+	ID int64 `json:"id"`
+}
+
+type TelegramUser struct {
+	ID    int64 `json:"id"`
+	IsBot bool  `json:"is_bot"`
+}
+
+type TelegramGetUpdatesResult struct {
+	Ok     bool             `json:"ok"`
+	Result []TelegramUpdate `json:"result"`
+}
+
+type TelegramGetMeResult struct {
+	Ok     bool          `json:"ok"`
+	Result *TelegramUser `json:"result"`
+}
 
 // SMTPOutConfig holds configuration for outbound SMTP (reply-to-email feature).
 type SMTPOutConfig struct {
@@ -127,4 +169,36 @@ func SendReplyEmail(
 
 	d := gomail.NewDialer(config.Host, config.Port, config.Username, config.Password)
 	return d.DialAndSend(m)
+}
+
+// HandleTelegramReply processes a Telegram update that is a reply to a bot message,
+// extracts email headers from the original message, and sends a reply email.
+func HandleTelegramReply(update TelegramUpdate, smtpOutConfig *SMTPOutConfig, botUserID int64) (notification string, err error) {
+	msg := update.Message
+	if msg == nil || msg.ReplyToMessage == nil {
+		return "", nil
+	}
+
+	// Only handle replies to our own messages — silently ignore others
+	if msg.ReplyToMessage.From == nil || msg.ReplyToMessage.From.ID != botUserID {
+		return "", nil
+	}
+
+	if !smtpOutConfig.IsConfigured() {
+		return "Reply-to-email is not configured. Set ST_SMTP_OUT_HOST to enable.", nil
+	}
+
+	headers, err := ParseMessageHeaders(msg.ReplyToMessage.Text)
+	if err != nil {
+		return "Could not parse the original email from the message.", nil
+	}
+
+	from, to, cc, subject := ComposeReplyAddresses(headers)
+	err = SendReplyEmail(smtpOutConfig, from, to, cc, subject, msg.Text)
+	if err != nil {
+		return fmt.Sprintf("Failed to send email: %s", err), nil
+	}
+
+	allRecipients := slices.Concat(to, cc)
+	return fmt.Sprintf("Email sent from %s to %s", from, strings.Join(allRecipients, ", ")), nil
 }
