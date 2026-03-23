@@ -36,19 +36,20 @@ var (
 	filterRules []FilterRule
 
 	// Sentinel errors
-	errInvalidMatchType       = errors.New("invalid match type")
-	errInvalidField           = errors.New("invalid field")
-	errRejectedByFilter       = errors.New("email rejected by filter rule")
-	errReadingJSON            = errors.New("error reading json body of sendMessage")
-	errParsingJSON            = errors.New("error parsing json body of sendMessage")
-	errResponseNotOK          = errors.New("telegram API response not ok")
-	errUnknownFileType        = errors.New("unknown file type")
-	errEmailParsing           = errors.New("error occurred during email parsing")
-	errMessageTooLarge        = errors.New("message length is larger than forwarded-attachment-max-size")
-	errUnexpectedTruncation   = errors.New("unexpected length of truncated message")
-	errTelegramNon200         = errors.New("non-200 response from Telegram")
-	errSanitizedTelegramFail  = errors.New("telegram operation failed")
-	errBlacklistFileDeprecate = errors.New("--blacklist-file is deprecated, use --config-file with filter_rules in YAML instead")
+	errInvalidMatchType          = errors.New("invalid match type")
+	errInvalidField              = errors.New("invalid field")
+	errRejectedByFilter          = errors.New("email rejected by filter rule")
+	errReadingJSON               = errors.New("error reading json body of sendMessage")
+	errParsingJSON               = errors.New("error parsing json body of sendMessage")
+	errResponseNotOK             = errors.New("telegram API response not ok")
+	errUnknownFileType           = errors.New("unknown file type")
+	errEmailParsing              = errors.New("error occurred during email parsing")
+	errMessageTooLarge           = errors.New("message length is larger than forwarded-attachment-max-size")
+	errUnexpectedTruncation      = errors.New("unexpected length of truncated message")
+	errTelegramNon200            = errors.New("non-200 response from Telegram")
+	errSanitizedTelegramFail     = errors.New("telegram operation failed")
+	errBlacklistFileDeprecate    = errors.New("--blacklist-file is deprecated, use --config-file with filter_rules in YAML instead")
+	errTemplateNoLongerSupported = errors.New("ST_TELEGRAM_MESSAGE_TEMPLATE is no longer supported. The message format is now fixed to support the reply-to-email feature. This check can be removed in 3.0.0 or later")
 )
 
 type FilterCondition struct {
@@ -153,9 +154,7 @@ func main() {
 				return errBlacklistFileDeprecate
 			}
 			if os.Getenv("ST_TELEGRAM_MESSAGE_TEMPLATE") != "" {
-				return errors.New("ST_TELEGRAM_MESSAGE_TEMPLATE is no longer supported. " +
-					"The message format is now fixed to support the reply-to-email feature. " +
-					"This check can be removed in 3.0.0 or later")
+				return errTemplateNoLongerSupported
 			}
 			smtpPrimaryHost := cmd.String("smtp-primary-host")
 			if smtpPrimaryHost == "" {
@@ -197,7 +196,7 @@ func main() {
 
 			smtpOutConfig := &SMTPOutConfig{
 				Host:     cmd.String("smtp-out-host"),
-				Port:     int(cmd.Int("smtp-out-port")),
+				Port:     cmd.Int("smtp-out-port"),
 				Username: cmd.String("smtp-out-username"),
 				Password: cmd.String("smtp-out-password"),
 			}
@@ -220,12 +219,17 @@ func main() {
 				return fmt.Errorf("start error: %w", err)
 			}
 
+			allowedChatIDs, err := parseChatIDs(telegramConfig.ChatIDs)
+			if err != nil {
+				return fmt.Errorf("failed to parse telegram-chat-ids: %w", err)
+			}
+
 			var cancelPolling context.CancelFunc
 			if smtpOutConfig.IsConfigured() {
 				telegramConfig.ForceReply = true
 				pollCtx, cancel := context.WithCancel(context.Background())
 				cancelPolling = cancel
-				go PollTelegramUpdates(pollCtx, telegramConfig, smtpOutConfig)
+				go PollTelegramUpdates(pollCtx, telegramConfig, smtpOutConfig, allowedChatIDs)
 			}
 
 			return awaitShutdown(ctx, &d, cancelPolling)

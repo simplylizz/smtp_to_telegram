@@ -51,6 +51,33 @@ func TestParseMessageHeaders(t *testing.T) {
 	}
 }
 
+func TestParseChatIDs(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    []int64
+		wantErr bool
+	}{
+		{name: "single", input: "123", want: []int64{123}},
+		{name: "multiple", input: "123,456,789", want: []int64{123, 456, 789}},
+		{name: "negative IDs (group chats)", input: "-100123,-100456", want: []int64{-100123, -100456}},
+		{name: "with spaces", input: " 123 , 456 ", want: []int64{123, 456}},
+		{name: "empty string", input: "", want: nil},
+		{name: "invalid returns error", input: "123,abc,456", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseChatIDs(tt.input)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tt.want, got)
+		})
+	}
+}
+
 func TestComposeReplyAddresses(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -119,7 +146,7 @@ func TestComposeReplyAddresses(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			from, to, cc, subject := ComposeReplyAddresses(tt.headers)
+			from, to, cc, subject := ComposeReplyAddresses(&tt.headers)
 			require.Equal(t, tt.wantFrom, from)
 			require.Equal(t, tt.wantTo, to)
 			require.Equal(t, tt.wantCC, cc)
@@ -141,9 +168,9 @@ func runTestSMTPServer(t *testing.T, ln net.Listener, received chan<- testEmail)
 	if err != nil {
 		return
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
-	write := func(s string) { fmt.Fprintf(conn, "%s\r\n", s) }
+	write := func(s string) { _, _ = fmt.Fprintf(conn, "%s\r\n", s) }
 	scanner := bufio.NewScanner(conn)
 
 	var email testEmail
@@ -207,7 +234,7 @@ func TestSendReplyEmail(t *testing.T) {
 	received := make(chan testEmail, 1)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	go runTestSMTPServer(t, ln, received)
 
 	addr := ln.Addr().String()
@@ -230,7 +257,7 @@ func TestHandleTelegramReply_Success(t *testing.T) {
 	received := make(chan testEmail, 1)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	go runTestSMTPServer(t, ln, received)
 
 	addr := ln.Addr().String()
@@ -241,8 +268,7 @@ func TestHandleTelegramReply_Success(t *testing.T) {
 	originalText := "From: sender@test\nTo: me@test\nSubject: Hello\n\nOriginal body"
 	update := makeBotReplyUpdate(999, originalText, "My reply")
 
-	notification, err := HandleTelegramReply(update, config, 999)
-	require.NoError(t, err)
+	notification := HandleTelegramReply(update, config, 999)
 	require.Contains(t, notification, "Email sent from me@test to sender@test")
 
 	msg := <-received
@@ -255,8 +281,7 @@ func TestHandleTelegramReply_NonBotMessage_Ignored(t *testing.T) {
 	update := makeBotReplyUpdate(888, "From: sender@test\nTo: me@test\nSubject: Hello\n\nBody", "Reply text")
 	config := &SMTPOutConfig{Host: "localhost", Port: 25}
 
-	notification, err := HandleTelegramReply(update, config, 999)
-	require.NoError(t, err)
+	notification := HandleTelegramReply(update, config, 999)
 	require.Empty(t, notification)
 }
 
@@ -264,8 +289,7 @@ func TestHandleTelegramReply_SMTPNotConfigured(t *testing.T) {
 	update := makeBotReplyUpdate(999, "From: sender@test\nTo: me@test\nSubject: Hello\n\nBody", "Reply text")
 	config := &SMTPOutConfig{Host: "", Port: 0}
 
-	notification, err := HandleTelegramReply(update, config, 999)
-	require.NoError(t, err)
+	notification := HandleTelegramReply(update, config, 999)
 	require.Contains(t, notification, "not configured")
 }
 
@@ -273,8 +297,7 @@ func TestHandleTelegramReply_ParseFailure(t *testing.T) {
 	update := makeBotReplyUpdate(999, "just some random text", "Reply text")
 	config := &SMTPOutConfig{Host: "localhost", Port: 25}
 
-	notification, err := HandleTelegramReply(update, config, 999)
-	require.NoError(t, err)
+	notification := HandleTelegramReply(update, config, 999)
 	require.Contains(t, notification, "Could not parse")
 }
 
@@ -282,8 +305,7 @@ func TestHandleTelegramReply_SMTPSendFailure(t *testing.T) {
 	update := makeBotReplyUpdate(999, "From: sender@test\nTo: me@test\nSubject: Hello\n\nBody", "Reply text")
 	config := &SMTPOutConfig{Host: "127.0.0.1", Port: 19999}
 
-	notification, err := HandleTelegramReply(update, config, 999)
-	require.NoError(t, err)
+	notification := HandleTelegramReply(update, config, 999)
 	require.Contains(t, notification, "Failed to send email")
 }
 
@@ -309,7 +331,7 @@ func TestEndToEndReplyFlow(t *testing.T) {
 	received := make(chan testEmail, 1)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	go runTestSMTPServer(t, ln, received)
 
 	host, portStr, _ := net.SplitHostPort(ln.Addr().String())
@@ -321,8 +343,7 @@ func TestEndToEndReplyFlow(t *testing.T) {
 	update := makeBotReplyUpdate(999, originalMessage, "This is my reply!")
 
 	// Step 4: Handle the reply
-	notification, err := HandleTelegramReply(update, smtpOutConfig, 999)
-	require.NoError(t, err)
+	notification := HandleTelegramReply(update, smtpOutConfig, 999)
 	require.Contains(t, notification, "Email sent")
 
 	// Step 5: Verify outbound email

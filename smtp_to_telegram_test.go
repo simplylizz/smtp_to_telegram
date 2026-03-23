@@ -739,15 +739,15 @@ func HTTPServer(t *testing.T, handler http.Handler) *http.Server {
 }
 
 type SuccessHandler struct {
-	RequestMessages    []string
-	RequestDocuments   []*FormattedAttachment
+	RequestMessages     []string
+	RequestDocuments    []*FormattedAttachment
 	RequestReplyMarkups []string
 }
 
 func NewSuccessHandler() *SuccessHandler {
 	return &SuccessHandler{
-		RequestMessages:    []string{},
-		RequestDocuments:   []*FormattedAttachment{},
+		RequestMessages:     []string{},
+		RequestDocuments:    []*FormattedAttachment{},
 		RequestReplyMarkups: []string{},
 	}
 }
@@ -1405,5 +1405,5 @@ func TestForceReplyNotIncludedWhenDisabled(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NotEmpty(t, h.RequestReplyMarkups)
-	require.Equal(t, "", h.RequestReplyMarkups[0])
+	require.Empty(t, h.RequestReplyMarkups[0])
 }
