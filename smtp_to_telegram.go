@@ -49,7 +49,7 @@ var (
 	errTelegramNon200            = errors.New("non-200 response from Telegram")
 	errSanitizedTelegramFail     = errors.New("telegram operation failed")
 	errBlacklistFileDeprecate    = errors.New("--blacklist-file is deprecated, use --config-file with filter_rules in YAML instead")
-	errTemplateNoLongerSupported = errors.New("ST_TELEGRAM_MESSAGE_TEMPLATE is no longer supported. The message format is now fixed to support the reply-to-email feature. This check can be removed in 3.0.0 or later")
+	errTemplateNoLongerSupported = errors.New("ST_TELEGRAM_MESSAGE_TEMPLATE is no longer supported. The message format is now fixed to support the reply-to-email feature") // TODO: remove in 3.0.0 or later
 )
 
 type FilterCondition struct {
@@ -224,12 +224,14 @@ func main() {
 				return fmt.Errorf("failed to parse telegram-chat-ids: %w", err)
 			}
 
+			allowedHosts := getAllowedHosts(smtpConfig)
+
 			var cancelPolling context.CancelFunc
 			if smtpOutConfig.IsConfigured() {
 				telegramConfig.ForceReply = true
 				pollCtx, cancel := context.WithCancel(context.Background())
 				cancelPolling = cancel
-				go PollTelegramUpdates(pollCtx, telegramConfig, smtpOutConfig, allowedChatIDs)
+				go PollTelegramUpdates(pollCtx, telegramConfig, smtpOutConfig, allowedChatIDs, allowedHosts)
 			}
 
 			return awaitShutdown(ctx, &d, cancelPolling)

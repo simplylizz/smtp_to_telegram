@@ -79,13 +79,17 @@ func TestParseChatIDs(t *testing.T) {
 }
 
 func TestComposeReplyAddresses(t *testing.T) {
+	anyHost := []string{"."}
+
 	tests := []struct {
-		name        string
-		headers     ParsedHeaders
-		wantFrom    string
-		wantTo      []string
-		wantCC      []string
-		wantSubject string
+		name         string
+		headers      ParsedHeaders
+		allowedHosts []string
+		wantFrom     string
+		wantTo       []string
+		wantCC       []string
+		wantSubject  string
+		wantErr      bool
 	}{
 		{
 			name:        "reply to sender, use Reply-To",
@@ -143,14 +147,98 @@ func TestComposeReplyAddresses(t *testing.T) {
 			wantCC:      nil,
 			wantSubject: "re: Hello",
 		},
+		{
+			name:         "our address is in CC, not To",
+			headers:      ParsedHeaders{From: "sender@example.com", To: "someone@example.com", CC: "me@myhost.org", Subject: "Hello"},
+			allowedHosts: []string{"myhost.org"},
+			wantFrom:     "me@myhost.org",
+			wantTo:       []string{"sender@example.com"},
+			wantCC:       []string{"someone@example.com"},
+			wantSubject:  "Re: Hello",
+		},
+		{
+			name:         "our address is second in To",
+			headers:      ParsedHeaders{From: "sender@example.com", To: "other@example.com, me@myhost.org", Subject: "Hello"},
+			allowedHosts: []string{"myhost.org"},
+			wantFrom:     "me@myhost.org",
+			wantTo:       []string{"sender@example.com"},
+			wantCC:       []string{"other@example.com"},
+			wantSubject:  "Re: Hello",
+		},
+		{
+			name:         "no matching address returns error",
+			headers:      ParsedHeaders{From: "sender@example.com", To: "someone@example.com", Subject: "Hello"},
+			allowedHosts: []string{"myhost.org"},
+			wantErr:      true,
+		},
+		{
+			name:    "empty To and CC returns error",
+			headers: ParsedHeaders{From: "sender@test", Subject: "Hello"},
+			wantErr: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			from, to, cc, subject := ComposeReplyAddresses(&tt.headers)
+			hosts := tt.allowedHosts
+			if hosts == nil {
+				hosts = anyHost
+			}
+			from, to, cc, subject, err := ComposeReplyAddresses(&tt.headers, hosts)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
 			require.Equal(t, tt.wantFrom, from)
 			require.Equal(t, tt.wantTo, to)
 			require.Equal(t, tt.wantCC, cc)
 			require.Equal(t, tt.wantSubject, subject)
+		})
+	}
+}
+
+func TestFindOwnAddress(t *testing.T) {
+	tests := []struct {
+		name         string
+		addresses    []string
+		allowedHosts []string
+		want         string
+	}{
+		{
+			name:         "any host returns first",
+			addresses:    []string{"a@foo.com", "b@bar.com"},
+			allowedHosts: []string{"."},
+			want:         "a@foo.com",
+		},
+		{
+			name:         "matches specific host",
+			addresses:    []string{"a@foo.com", "b@bar.com"},
+			allowedHosts: []string{"bar.com"},
+			want:         "b@bar.com",
+		},
+		{
+			name:         "case insensitive domain match",
+			addresses:    []string{"me@MyHost.Org"},
+			allowedHosts: []string{"myhost.org"},
+			want:         "me@MyHost.Org",
+		},
+		{
+			name:         "no match returns empty",
+			addresses:    []string{"a@foo.com"},
+			allowedHosts: []string{"bar.com"},
+			want:         "",
+		},
+		{
+			name:         "empty addresses",
+			addresses:    nil,
+			allowedHosts: []string{"."},
+			want:         "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := findOwnAddress(tt.addresses, tt.allowedHosts)
+			require.Equal(t, tt.want, got)
 		})
 	}
 }
@@ -268,7 +356,7 @@ func TestHandleTelegramReply_Success(t *testing.T) {
 	originalText := "From: sender@test\nTo: me@test\nSubject: Hello\n\nOriginal body"
 	update := makeBotReplyUpdate(999, originalText, "My reply")
 
-	notification := HandleTelegramReply(update, config, 999)
+	notification := HandleTelegramReply(update, config, 999, []string{"."})
 	require.Contains(t, notification, "Email sent from me@test to sender@test")
 
 	msg := <-received
@@ -281,7 +369,7 @@ func TestHandleTelegramReply_NonBotMessage_Ignored(t *testing.T) {
 	update := makeBotReplyUpdate(888, "From: sender@test\nTo: me@test\nSubject: Hello\n\nBody", "Reply text")
 	config := &SMTPOutConfig{Host: "localhost", Port: 25}
 
-	notification := HandleTelegramReply(update, config, 999)
+	notification := HandleTelegramReply(update, config, 999, []string{"."})
 	require.Empty(t, notification)
 }
 
@@ -289,7 +377,7 @@ func TestHandleTelegramReply_SMTPNotConfigured(t *testing.T) {
 	update := makeBotReplyUpdate(999, "From: sender@test\nTo: me@test\nSubject: Hello\n\nBody", "Reply text")
 	config := &SMTPOutConfig{Host: "", Port: 0}
 
-	notification := HandleTelegramReply(update, config, 999)
+	notification := HandleTelegramReply(update, config, 999, []string{"."})
 	require.Contains(t, notification, "not configured")
 }
 
@@ -297,7 +385,7 @@ func TestHandleTelegramReply_ParseFailure(t *testing.T) {
 	update := makeBotReplyUpdate(999, "just some random text", "Reply text")
 	config := &SMTPOutConfig{Host: "localhost", Port: 25}
 
-	notification := HandleTelegramReply(update, config, 999)
+	notification := HandleTelegramReply(update, config, 999, []string{"."})
 	require.Contains(t, notification, "Could not parse")
 }
 
@@ -305,7 +393,7 @@ func TestHandleTelegramReply_SMTPSendFailure(t *testing.T) {
 	update := makeBotReplyUpdate(999, "From: sender@test\nTo: me@test\nSubject: Hello\n\nBody", "Reply text")
 	config := &SMTPOutConfig{Host: "127.0.0.1", Port: 19999}
 
-	notification := HandleTelegramReply(update, config, 999)
+	notification := HandleTelegramReply(update, config, 999, []string{"."})
 	require.Contains(t, notification, "Failed to send email")
 }
 
@@ -343,7 +431,7 @@ func TestEndToEndReplyFlow(t *testing.T) {
 	update := makeBotReplyUpdate(999, originalMessage, "This is my reply!")
 
 	// Step 4: Handle the reply
-	notification := HandleTelegramReply(update, smtpOutConfig, 999)
+	notification := HandleTelegramReply(update, smtpOutConfig, 999, []string{"."})
 	require.Contains(t, notification, "Email sent")
 
 	// Step 5: Verify outbound email

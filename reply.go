@@ -82,6 +82,7 @@ var (
 	errGetMeNotOk        = errors.New("getMe returned not ok")
 	errGetMeRetries      = errors.New("getMe failed after retries")
 	errGetUpdatesNotOk   = errors.New("getUpdates returned not ok")
+	errNoOwnAddress      = errors.New("no To/CC address matches allowed hosts")
 )
 
 // ParseMessageHeaders extracts email-style headers from the top of a Telegram message.
@@ -113,10 +114,16 @@ func ParseMessageHeaders(text string) (ParsedHeaders, error) {
 }
 
 // ComposeReplyAddresses determines the from, to, cc, and subject for a reply email.
-func ComposeReplyAddresses(headers *ParsedHeaders) (from string, to, cc []string, subject string) {
+// It picks the first To or CC address whose domain matches an allowed host as the
+// sender, so the reply comes from our own address even when we were CC'd.
+func ComposeReplyAddresses(headers *ParsedHeaders, allowedHosts []string) (from string, to, cc []string, subject string, err error) {
 	toAddresses := splitAddresses(headers.To)
-	if len(toAddresses) > 0 {
-		from = toAddresses[0]
+	ccAddresses := splitAddresses(headers.CC)
+	allAddresses := slices.Concat(toAddresses, ccAddresses)
+
+	from = findOwnAddress(allAddresses, allowedHosts)
+	if from == "" {
+		return "", nil, nil, "", errNoOwnAddress
 	}
 
 	if headers.ReplyTo != "" {
@@ -125,16 +132,9 @@ func ComposeReplyAddresses(headers *ParsedHeaders) (from string, to, cc []string
 		to = []string{headers.From}
 	}
 
-	var allCC []string
-	if len(toAddresses) > 1 {
-		allCC = append(allCC, toAddresses[1:]...)
-	}
-	if headers.CC != "" {
-		allCC = append(allCC, splitAddresses(headers.CC)...)
-	}
-	for _, addr := range allCC {
+	for _, addr := range allAddresses {
 		trimmed := strings.TrimSpace(addr)
-		if trimmed != from && !slices.Contains(to, trimmed) {
+		if trimmed != "" && trimmed != from && !slices.Contains(to, trimmed) {
 			cc = append(cc, trimmed)
 		}
 	}
@@ -144,7 +144,7 @@ func ComposeReplyAddresses(headers *ParsedHeaders) (from string, to, cc []string
 		subject = "Re: " + subject
 	}
 
-	return from, to, cc, subject
+	return from, to, cc, subject, nil
 }
 
 func parseChatIDs(chatIDsStr string) ([]int64, error) {
@@ -175,6 +175,30 @@ func splitAddresses(s string) []string {
 	return result
 }
 
+// findOwnAddress returns the first address whose domain matches one of the
+// allowed hosts. If allowedHosts contains "." (any host), it returns the first
+// address unconditionally.
+func findOwnAddress(addresses, allowedHosts []string) string {
+	anyHost := slices.Contains(allowedHosts, ".")
+	for _, addr := range addresses {
+		addr = strings.TrimSpace(addr)
+		if addr == "" {
+			continue
+		}
+		if anyHost {
+			return addr
+		}
+		if _, domain, ok := strings.Cut(addr, "@"); ok {
+			for _, host := range allowedHosts {
+				if strings.EqualFold(host, domain) {
+					return addr
+				}
+			}
+		}
+	}
+	return ""
+}
+
 // SendReplyEmail sends a reply email via SMTP using the given configuration.
 func SendReplyEmail(
 	config *SMTPOutConfig,
@@ -199,7 +223,7 @@ func SendReplyEmail(
 
 // HandleTelegramReply processes a Telegram update that is a reply to a bot message,
 // extracts email headers from the original message, and sends a reply email.
-func HandleTelegramReply(update TelegramUpdate, smtpOutConfig *SMTPOutConfig, botUserID int64) string {
+func HandleTelegramReply(update TelegramUpdate, smtpOutConfig *SMTPOutConfig, botUserID int64, allowedHosts []string) string {
 	msg := update.Message
 	if msg == nil || msg.ReplyToMessage == nil {
 		return ""
@@ -219,7 +243,10 @@ func HandleTelegramReply(update TelegramUpdate, smtpOutConfig *SMTPOutConfig, bo
 		return "Could not parse the original email from the message."
 	}
 
-	from, to, cc, subject := ComposeReplyAddresses(&headers)
+	from, to, cc, subject, err := ComposeReplyAddresses(&headers, allowedHosts)
+	if err != nil {
+		return "Could not determine sender address from the original email."
+	}
 	if err := SendReplyEmail(smtpOutConfig, from, to, cc, subject, msg.Text); err != nil {
 		return fmt.Sprintf("Failed to send email: %s", err)
 	}
@@ -245,6 +272,15 @@ func GetBotUserID(ctx context.Context, telegramConfig *TelegramConfig, client *h
 		resp, err := client.Do(req)
 		if err != nil {
 			logger.Warningf("getMe attempt %d/%d failed: %s", attempt+1, maxRetries, SanitizeBotToken(err.Error(), telegramConfig.BotToken))
+			time.Sleep(backoff)
+			backoff *= 2
+			continue
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			_, _ = io.Copy(io.Discard, resp.Body)
+			_ = resp.Body.Close()
+			logger.Warningf("getMe attempt %d/%d: HTTP %d", attempt+1, maxRetries, resp.StatusCode)
 			time.Sleep(backoff)
 			backoff *= 2
 			continue
@@ -289,6 +325,10 @@ func getUpdates(ctx context.Context, telegramConfig *TelegramConfig, client *htt
 		}
 	}()
 
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("%w: HTTP %d", errGetUpdatesNotOk, resp.StatusCode)
+	}
+
 	var result TelegramGetUpdatesResult
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err
@@ -322,6 +362,8 @@ func sendNotification(ctx context.Context, telegramConfig *TelegramConfig, clien
 		return
 	}
 	defer func() {
+		// Drain remaining body so the HTTP transport can reuse the connection.
+		_, _ = io.Copy(io.Discard, resp.Body)
 		if closeErr := resp.Body.Close(); closeErr != nil {
 			logger.Warningf("Failed to close response body: %v", closeErr)
 		}
@@ -337,6 +379,7 @@ func PollTelegramUpdates(
 	telegramConfig *TelegramConfig,
 	smtpOutConfig *SMTPOutConfig,
 	allowedChatIDs []int64,
+	allowedHosts []string,
 ) {
 	client := &http.Client{Timeout: 40 * time.Second}
 
@@ -381,11 +424,14 @@ func PollTelegramUpdates(
 
 		for _, update := range updates {
 			offset = update.UpdateID + 1
-			if update.Message != nil && !slices.Contains(allowedChatIDs, update.Message.Chat.ID) {
+			if update.Message == nil {
+				continue
+			}
+			if !slices.Contains(allowedChatIDs, update.Message.Chat.ID) {
 				continue // ignore updates from unauthorized chats
 			}
-			notification := HandleTelegramReply(update, smtpOutConfig, botUserID)
-			if notification != "" && update.Message != nil {
+			notification := HandleTelegramReply(update, smtpOutConfig, botUserID, allowedHosts)
+			if notification != "" {
 				sendNotification(ctx, telegramConfig, client, update.Message.Chat.ID, update.Message.MessageID, notification)
 			}
 		}
