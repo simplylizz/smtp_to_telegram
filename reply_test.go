@@ -2,8 +2,10 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"net"
+	"net/smtp"
 	"strconv"
 	"strings"
 	"testing"
@@ -283,4 +285,48 @@ func TestHandleTelegramReply_SMTPSendFailure(t *testing.T) {
 	notification, err := HandleTelegramReply(update, config, 999)
 	require.NoError(t, err)
 	require.Contains(t, notification, "Failed to send email")
+}
+
+func TestEndToEndReplyFlow(t *testing.T) {
+	// Setup: SMTP server + mock Telegram + test outbound SMTP
+	smtpConfig := makeSMTPConfig()
+	telegramConfig := makeTelegramConfig()
+	d := startSMTP(t, smtpConfig, telegramConfig)
+	defer d.Shutdown()
+
+	h := NewSuccessHandler()
+	s := HTTPServer(t, h)
+	defer func() { _ = s.Shutdown(context.Background()) }()
+
+	// Step 1: Send email via SMTP -> forwarded to Telegram
+	err := smtp.SendMail(smtpConfig.Listen, nil, "sender@test", []string{"recipient@test"}, []byte(
+		"Subject: Test subject\r\n\r\nTest body",
+	))
+	require.NoError(t, err)
+	require.NotEmpty(t, h.RequestMessages)
+
+	// Step 2: Start test SMTP server for outbound email
+	received := make(chan testEmail, 1)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer ln.Close()
+	go runTestSMTPServer(t, ln, received)
+
+	host, portStr, _ := net.SplitHostPort(ln.Addr().String())
+	port, _ := strconv.Atoi(portStr)
+	smtpOutConfig := &SMTPOutConfig{Host: host, Port: port}
+
+	// Step 3: Simulate Telegram reply to the forwarded message
+	originalMessage := h.RequestMessages[0]
+	update := makeBotReplyUpdate(999, originalMessage, "This is my reply!")
+
+	// Step 4: Handle the reply
+	notification, err := HandleTelegramReply(update, smtpOutConfig, 999)
+	require.NoError(t, err)
+	require.Contains(t, notification, "Email sent")
+
+	// Step 5: Verify outbound email
+	msg := <-received
+	require.Contains(t, msg.data, "Test subject")
+	require.Contains(t, msg.data, "This is my reply!")
 }
