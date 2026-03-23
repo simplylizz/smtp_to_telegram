@@ -43,3 +43,80 @@ func TestParseMessageHeaders(t *testing.T) {
 		})
 	}
 }
+
+func TestComposeReplyAddresses(t *testing.T) {
+	tests := []struct {
+		name        string
+		headers     ParsedHeaders
+		wantFrom    string
+		wantTo      []string
+		wantCC      []string
+		wantSubject string
+	}{
+		{
+			name:        "reply to sender, use Reply-To",
+			headers:     ParsedHeaders{From: "sender@test", To: "me@test", ReplyTo: "replyto@test", Subject: "Hello"},
+			wantFrom:    "me@test",
+			wantTo:      []string{"replyto@test"},
+			wantCC:      nil,
+			wantSubject: "Re: Hello",
+		},
+		{
+			name:        "reply to sender, no Reply-To",
+			headers:     ParsedHeaders{From: "sender@test", To: "me@test", Subject: "Hello"},
+			wantFrom:    "me@test",
+			wantTo:      []string{"sender@test"},
+			wantCC:      nil,
+			wantSubject: "Re: Hello",
+		},
+		{
+			name:        "reply all with CC",
+			headers:     ParsedHeaders{From: "sender@test", To: "me@test", CC: "cc1@test, cc2@test", Subject: "Hello"},
+			wantFrom:    "me@test",
+			wantTo:      []string{"sender@test"},
+			wantCC:      []string{"cc1@test", "cc2@test"},
+			wantSubject: "Re: Hello",
+		},
+		{
+			name:        "reply all, exclude self from CC",
+			headers:     ParsedHeaders{From: "sender@test", To: "me@test, other@test", CC: "cc@test", Subject: "Hello"},
+			wantFrom:    "me@test",
+			wantTo:      []string{"sender@test"},
+			wantCC:      []string{"other@test", "cc@test"},
+			wantSubject: "Re: Hello",
+		},
+		{
+			name:        "subject already has Re:",
+			headers:     ParsedHeaders{From: "sender@test", To: "me@test", Subject: "Re: Hello"},
+			wantFrom:    "me@test",
+			wantTo:      []string{"sender@test"},
+			wantCC:      nil,
+			wantSubject: "Re: Hello",
+		},
+		{
+			name:        "subject RE: uppercase",
+			headers:     ParsedHeaders{From: "sender@test", To: "me@test", Subject: "RE: Hello"},
+			wantFrom:    "me@test",
+			wantTo:      []string{"sender@test"},
+			wantCC:      nil,
+			wantSubject: "RE: Hello",
+		},
+		{
+			name:        "subject re: lowercase",
+			headers:     ParsedHeaders{From: "sender@test", To: "me@test", Subject: "re: Hello"},
+			wantFrom:    "me@test",
+			wantTo:      []string{"sender@test"},
+			wantCC:      nil,
+			wantSubject: "re: Hello",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			from, to, cc, subject := ComposeReplyAddresses(tt.headers)
+			require.Equal(t, tt.wantFrom, from)
+			require.Equal(t, tt.wantTo, to)
+			require.Equal(t, tt.wantCC, cc)
+			require.Equal(t, tt.wantSubject, subject)
+		})
+	}
+}
