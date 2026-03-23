@@ -130,7 +130,7 @@ func ComposeReplyAddresses(headers ParsedHeaders) (from string, to []string, cc 
 	}
 	for _, addr := range allCC {
 		trimmed := strings.TrimSpace(addr)
-		if trimmed != from {
+		if trimmed != from && !slices.Contains(to, trimmed) {
 			cc = append(cc, trimmed)
 		}
 	}

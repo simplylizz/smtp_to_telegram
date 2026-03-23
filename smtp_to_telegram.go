@@ -205,7 +205,7 @@ func main() {
 				if smtpOutConfig.Host == "" {
 					smtpOutConfig.Host = yamlSMTPOut.Host
 				}
-				if smtpOutConfig.Port == 587 && yamlSMTPOut.Port != 0 {
+				if !cmd.IsSet("smtp-out-port") && yamlSMTPOut.Port != 0 {
 					smtpOutConfig.Port = yamlSMTPOut.Port
 				}
 				if smtpOutConfig.Username == "" {
