@@ -50,6 +50,15 @@ ST_TELEGRAM_MESSAGE_TEMPLATE="Subject: {subject}\\n\\n{body}"
 ST_SMTP_ALLOWED_HOSTS=cvzilla.net,example.com
 ```
 
+## Development
+
+Install [pre-commit](https://pre-commit.com/) hooks to run formatting,
+linting, and tests before each commit:
+
+```
+pre-commit install
+```
+
 ## Configuration File
 
 You can define filter rules in a YAML configuration file. Rules match against email fields (from, to, subject, body, html) using regex patterns and reject emails that match.
