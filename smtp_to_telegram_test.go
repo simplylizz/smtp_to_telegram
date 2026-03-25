@@ -732,7 +732,7 @@ func HTTPServer(t *testing.T, handler http.Handler) *http.Server {
 	}
 	go func() {
 		if err := h.Serve(ln); err != nil {
-			logger.Error(err)
+			t.Log(err)
 		}
 	}()
 	return h
