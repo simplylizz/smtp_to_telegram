@@ -10,7 +10,6 @@ RUN go mod download
 COPY . .
 
 ARG ST_VERSION
-ARG GOPROXY=direct
 RUN CGO_ENABLED=0 GOOS=linux go build \
         -ldflags "-s -w \
             -X main.Version=${ST_VERSION:-UNKNOWN_RELEASE}" \

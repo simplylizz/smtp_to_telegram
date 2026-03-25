@@ -46,6 +46,7 @@ jobs:
             ST_VERSION=${{ github.ref_name }}
 
   github-release:
+    needs: [docker]
     runs-on: ubuntu-latest
     permissions:
       contents: write
