@@ -49,6 +49,7 @@ jobs:
 
   docker-dev:
     if: github.event_name == 'push'
+    # Lint failures shouldn't block dev builds to keep the testing cycle fast
     needs: [test]
     runs-on: ubuntu-latest
     steps:
