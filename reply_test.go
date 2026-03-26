@@ -447,3 +447,56 @@ func TestEndToEndReplyFlow(t *testing.T) {
 	require.Contains(t, msg.data, "Test subject")
 	require.Contains(t, msg.data, "This is my reply!")
 }
+
+func TestSplitAddresses_RFC(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{
+			name:  "simple addresses",
+			input: "alice@test, bob@test",
+			want:  []string{"alice@test", "bob@test"},
+		},
+		{
+			name:  "quoted display name with comma",
+			input: `"Doe, John" <john@example.com>, alice@test`,
+			want:  []string{"john@example.com", "alice@test"},
+		},
+		{
+			name:  "display name without comma",
+			input: "John Doe <john@example.com>, alice@test",
+			want:  []string{"john@example.com", "alice@test"},
+		},
+		{
+			name:  "empty string",
+			input: "",
+			want:  nil,
+		},
+		{
+			name:  "single address",
+			input: "alice@test",
+			want:  []string{"alice@test"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := splitAddresses(tt.input)
+			require.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestComposeReplyAddresses_RFC_QuotedComma(t *testing.T) {
+	headers := ParsedHeaders{
+		From:    "sender@test",
+		To:      `"Doe, John" <me@myhost.org>, other@example.com`,
+		Subject: "Hello",
+	}
+	from, to, cc, _, err := ComposeReplyAddresses(&headers, []string{"myhost.org"})
+	require.NoError(t, err)
+	require.Equal(t, "me@myhost.org", from)
+	require.Equal(t, []string{"sender@test"}, to)
+	require.Equal(t, []string{"other@example.com"}, cc)
+}

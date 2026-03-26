@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/mail"
 	"net/url"
 	"slices"
 	"strconv"
@@ -164,13 +165,26 @@ func parseChatIDs(chatIDsStr string) ([]int64, error) {
 }
 
 func splitAddresses(s string) []string {
-	parts := strings.Split(s, ",")
-	var result []string
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			result = append(result, p)
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	addrs, err := mail.ParseAddressList(s)
+	if err != nil {
+		// Fall back to simple comma split for non-RFC addresses
+		parts := strings.Split(s, ",")
+		var result []string
+		for _, p := range parts {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				result = append(result, p)
+			}
 		}
+		return result
+	}
+	result := make([]string, 0, len(addrs))
+	for _, a := range addrs {
+		result = append(result, a.Address)
 	}
 	return result
 }

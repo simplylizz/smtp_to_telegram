@@ -421,14 +421,11 @@ func loadConfig(filename string) (*SMTPOutConfig, error) {
 		logger.Infof("Loaded %d filter rules from %s", len(filterRules), filename)
 	}
 
-	var yamlSMTPOut *SMTPOutConfig
-	if config.SMTPOut.Host != "" {
-		yamlSMTPOut = &SMTPOutConfig{
-			Host:     config.SMTPOut.Host,
-			Port:     config.SMTPOut.Port,
-			Username: config.SMTPOut.Username,
-			Password: config.SMTPOut.Password,
-		}
+	yamlSMTPOut := &SMTPOutConfig{
+		Host:     config.SMTPOut.Host,
+		Port:     config.SMTPOut.Port,
+		Username: config.SMTPOut.Username,
+		Password: config.SMTPOut.Password,
 	}
 
 	return yamlSMTPOut, nil
@@ -939,8 +936,21 @@ func FormatMessage(
 	emptyMessageText := buildMessage(strings.TrimSpace(fmt.Sprintf(".%s", BodyTruncated)))
 	emptyMessageRunes := []rune(emptyMessageText)
 	if uint(len(emptyMessageRunes)) >= messageLengthToSendAsFile {
-		// Impossible to truncate properly
-		return fullMessageText, string(fullMessageRunes[:messageLengthToSendAsFile])
+		// Headers alone exceed the limit. Build a minimal-header message
+		// so HandleTelegramReply can still parse From/To/Subject for replies.
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "From: %s\n", from)
+		firstTo := to
+		if before, _, ok := strings.Cut(to, ","); ok {
+			firstTo = strings.TrimSpace(before)
+		}
+		fmt.Fprintf(&sb, "To: %s\n", firstTo)
+		fmt.Fprintf(&sb, "Subject: %s\n\n[truncated]", subject)
+		minimalMsg := sb.String()
+		if minimalRunes := []rune(minimalMsg); uint(len(minimalRunes)) > messageLengthToSendAsFile {
+			minimalMsg = string(minimalRunes[:messageLengthToSendAsFile])
+		}
+		return fullMessageText, minimalMsg
 	}
 
 	maxBodyLength := messageLengthToSendAsFile - uint(len(emptyMessageRunes))

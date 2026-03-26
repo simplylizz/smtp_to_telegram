@@ -1407,3 +1407,49 @@ func TestForceReplyNotIncludedWhenDisabled(t *testing.T) {
 	require.NotEmpty(t, h.RequestReplyMarkups)
 	require.Empty(t, h.RequestReplyMarkups[0])
 }
+
+func TestLoadConfigYAMLCredentialsWithoutHost(t *testing.T) {
+	tmpfile, err := os.CreateTemp("", "config_smtp_nohost*.yaml")
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(tmpfile.Name()) }()
+
+	content := `smtp_out:
+  port: 587
+  username: user@test
+  password: secret
+`
+	_, err = tmpfile.WriteString(content)
+	require.NoError(t, err)
+	require.NoError(t, tmpfile.Close())
+
+	smtpOut, err := loadConfig(tmpfile.Name())
+	require.NoError(t, err)
+	require.NotNil(t, smtpOut)
+	require.Empty(t, smtpOut.Host)
+	require.Equal(t, 587, smtpOut.Port)
+	require.Equal(t, "user@test", smtpOut.Username)
+	require.Equal(t, "secret", smtpOut.Password)
+}
+
+func TestFormatMessageMinimalHeaderOnHugeTo(t *testing.T) {
+	from := "sender@test"
+	// Build a To header that alone exceeds the limit
+	addrs := make([]string, 0, 100)
+	for i := range 100 {
+		addrs = append(addrs, fmt.Sprintf("recipient%d@example.com", i))
+	}
+	to := strings.Join(addrs, ", ")
+	subject := "Hello"
+	text := "body"
+
+	full, truncated := FormatMessage(from, to, subject, text, "", "", "", 80)
+	require.NotEmpty(t, truncated)
+	// The truncated message must contain parseable From/To/Subject headers
+	headers, err := ParseMessageHeaders(truncated)
+	require.NoError(t, err)
+	require.Equal(t, "sender@test", headers.From)
+	require.Contains(t, headers.To, "recipient0@example.com")
+	require.Equal(t, "Hello", headers.Subject)
+	// Full message still contains everything
+	require.Contains(t, full, to)
+}
