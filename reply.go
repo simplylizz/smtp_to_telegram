@@ -134,7 +134,7 @@ func ComposeReplyAddresses(headers *ParsedHeaders, allowedHosts []string) (from 
 
 	for _, addr := range allAddresses {
 		trimmed := strings.TrimSpace(addr)
-		if trimmed != "" && trimmed != from && !slices.Contains(to, trimmed) {
+		if trimmed != "" && trimmed != from && !slices.Contains(to, trimmed) && !slices.Contains(cc, trimmed) {
 			cc = append(cc, trimmed)
 		}
 	}
@@ -416,7 +416,12 @@ func PollTelegramUpdates(
 				return
 			}
 			logger.Errorf("getUpdates error: %s", SanitizeBotToken(err.Error(), telegramConfig.BotToken))
-			time.Sleep(errorBackoff)
+			select {
+			case <-ctx.Done():
+				logger.Info("Telegram polling stopped during backoff")
+				return
+			case <-time.After(errorBackoff):
+			}
 			errorBackoff = min(errorBackoff*2, maxBackoff)
 			continue
 		}

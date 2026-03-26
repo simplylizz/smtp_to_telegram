@@ -227,6 +227,9 @@ func main() {
 			allowedHosts := getAllowedHosts(smtpConfig)
 
 			var cancelPolling context.CancelFunc
+			if smtpOutConfig.IsConfigured() && slices.Contains(allowedHosts, ".") {
+				logger.Warning("smtp-out is configured with default allowed hosts (\".\"), which accepts any domain as sender. Set --smtp-allowed-hosts to restrict sender domains.")
+			}
 			if smtpOutConfig.IsConfigured() {
 				telegramConfig.ForceReply = true
 				pollCtx, cancel := context.WithCancel(context.Background())

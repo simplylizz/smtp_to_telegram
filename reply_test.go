@@ -172,6 +172,14 @@ func TestComposeReplyAddresses(t *testing.T) {
 			wantErr:      true,
 		},
 		{
+			name:        "duplicate address in To and CC is deduplicated",
+			headers:     ParsedHeaders{From: "sender@test", To: "me@test, dup@test", CC: "dup@test, cc2@test", Subject: "Hello"},
+			wantFrom:    "me@test",
+			wantTo:      []string{"sender@test"},
+			wantCC:      []string{"dup@test", "cc2@test"},
+			wantSubject: "Re: Hello",
+		},
+		{
 			name:    "empty To and CC returns error",
 			headers: ParsedHeaders{From: "sender@test", Subject: "Hello"},
 			wantErr: true,
