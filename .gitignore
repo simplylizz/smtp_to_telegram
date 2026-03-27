@@ -2,3 +2,4 @@ smtp_to_telegram
 dist
 env_file.prd
 coverage*
+.worktrees
