@@ -38,7 +38,6 @@ func makeTelegramConfig() *TelegramConfig {
 		ChatIDs:                          "42,142",
 		BotToken:                         "42:ZZZ",
 		APIPrefix:                        "http://" + testHTTPServerListen + "/",
-		MessageTemplate:                  "From: {from}\\nTo: {to}\\nSubject: {subject}\\n\\n{body}\\n\\n{attachments_details}",
 		ForwardedAttachmentMaxSize:       0,
 		ForwardedAttachmentMaxPhotoSize:  0,
 		ForwardedAttachmentRespectErrors: true,
@@ -48,6 +47,10 @@ func makeTelegramConfig() *TelegramConfig {
 
 func startSMTP(t *testing.T, smtpConfig *SMTPConfig, telegramConfig *TelegramConfig) guerrilla.Daemon {
 	t.Helper()
+	_, err := loadConfig(smtpConfig.ConfigFile)
+	if err != nil {
+		t.Fatalf("load config error: %s", err)
+	}
 	d, err := SMTPStart(smtpConfig, telegramConfig)
 	if err != nil {
 		t.Fatalf("start error: %s", err)
@@ -94,29 +97,6 @@ func TestSuccess(t *testing.T) {
 			"Subject: \n" +
 			"\n" +
 			"hi"
-
-	require.Equal(t, exp, h.RequestMessages[0])
-}
-
-func TestSuccessCustomFormat(t *testing.T) {
-	smtpConfig := makeSMTPConfig()
-	telegramConfig := makeTelegramConfig()
-	telegramConfig.MessageTemplate =
-		"Subject: {subject}\\n\\n{body}"
-	d := startSMTP(t, smtpConfig, telegramConfig)
-	defer d.Shutdown()
-
-	h := NewSuccessHandler()
-	s := HTTPServer(t, h)
-	defer func() { _ = s.Shutdown(context.Background()) }()
-
-	err := smtp.SendMail(smtpConfig.Listen, nil, "from@test", []string{"to@test"}, []byte(`hi`))
-	require.NoError(t, err)
-
-	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.ChatIDs, ",")))
-	exp := "Subject: \n" +
-		"\n" +
-		"hi"
 
 	require.Equal(t, exp, h.RequestMessages[0])
 }
@@ -676,6 +656,73 @@ QW5uYS1W6XJvbmlxdWUK
 	require.Equal(t, exp, h.RequestMessages[0])
 }
 
+func TestCCAndReplyToInForwardedMessage(t *testing.T) {
+	smtpConfig := makeSMTPConfig()
+	telegramConfig := makeTelegramConfig()
+	d := startSMTP(t, smtpConfig, telegramConfig)
+	defer d.Shutdown()
+
+	h := NewSuccessHandler()
+	s := HTTPServer(t, h)
+	defer func() { _ = s.Shutdown(context.Background()) }()
+
+	m := gomail.NewMessage()
+	m.SetHeader("From", "from@test")
+	m.SetHeader("To", "to@test")
+	m.SetHeader("Cc", "cc1@test", "cc2@test")
+	m.SetHeader("Reply-To", "replyto@test")
+	m.SetHeader("Subject", "Test subj")
+	m.SetBody("text/plain", "Text body")
+
+	di := gomail.NewDialer(testSMTPListenHost, testSMTPListenPort, "", "")
+	err := di.DialAndSend(m)
+	require.NoError(t, err)
+
+	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.ChatIDs, ",")))
+	exp :=
+		"From: from@test\n" +
+			"To: to@test, cc1@test, cc2@test\n" +
+			"CC: cc1@test, cc2@test\n" +
+			"Reply-To: replyto@test\n" +
+			"Subject: Test subj\n" +
+			"\n" +
+			"Text body"
+	require.Equal(t, exp, h.RequestMessages[0])
+}
+
+func TestNoCCOrReplyToWhenEmpty(t *testing.T) {
+	smtpConfig := makeSMTPConfig()
+	telegramConfig := makeTelegramConfig()
+	d := startSMTP(t, smtpConfig, telegramConfig)
+	defer d.Shutdown()
+
+	h := NewSuccessHandler()
+	s := HTTPServer(t, h)
+	defer func() { _ = s.Shutdown(context.Background()) }()
+
+	m := gomail.NewMessage()
+	m.SetHeader("From", "from@test")
+	m.SetHeader("To", "to@test")
+	m.SetHeader("Subject", "Test subj")
+	m.SetBody("text/plain", "Text body")
+
+	di := gomail.NewDialer(testSMTPListenHost, testSMTPListenPort, "", "")
+	err := di.DialAndSend(m)
+	require.NoError(t, err)
+
+	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.ChatIDs, ",")))
+	exp :=
+		"From: from@test\n" +
+			"To: to@test\n" +
+			"Subject: Test subj\n" +
+			"\n" +
+			"Text body"
+	require.Equal(t, exp, h.RequestMessages[0])
+	// Verify CC and Reply-To lines are NOT present
+	require.NotContains(t, h.RequestMessages[0], "CC:")
+	require.NotContains(t, h.RequestMessages[0], "Reply-To:")
+}
+
 func HTTPServer(t *testing.T, handler http.Handler) *http.Server {
 	t.Helper()
 	h := &http.Server{Addr: testHTTPServerListen, Handler: handler}
@@ -685,21 +732,23 @@ func HTTPServer(t *testing.T, handler http.Handler) *http.Server {
 	}
 	go func() {
 		if err := h.Serve(ln); err != nil {
-			logger.Error(err)
+			t.Log(err)
 		}
 	}()
 	return h
 }
 
 type SuccessHandler struct {
-	RequestMessages  []string
-	RequestDocuments []*FormattedAttachment
+	RequestMessages     []string
+	RequestDocuments    []*FormattedAttachment
+	RequestReplyMarkups []string
 }
 
 func NewSuccessHandler() *SuccessHandler {
 	return &SuccessHandler{
-		RequestMessages:  []string{},
-		RequestDocuments: []*FormattedAttachment{},
+		RequestMessages:     []string{},
+		RequestDocuments:    []*FormattedAttachment{},
+		RequestReplyMarkups: []string{},
 	}
 }
 
@@ -712,6 +761,7 @@ func (s *SuccessHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			panic(err)
 		}
 		s.RequestMessages = append(s.RequestMessages, r.PostForm.Get("text"))
+		s.RequestReplyMarkups = append(s.RequestReplyMarkups, r.PostForm.Get("reply_markup"))
 		return
 	}
 	isSendDocument := strings.Contains(r.URL.Path, "sendDocument")
@@ -794,7 +844,7 @@ func TestLoadFilterRules(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tmpfile.Close())
 
-	err = loadFilterRules(tmpfile.Name())
+	_, err = loadConfig(tmpfile.Name())
 	require.NoError(t, err)
 	require.Len(t, filterRules, 2)
 	require.Equal(t, "block-spam", filterRules[0].Name)
@@ -803,13 +853,13 @@ func TestLoadFilterRules(t *testing.T) {
 }
 
 func TestLoadFilterRulesEmptyFilename(t *testing.T) {
-	err := loadFilterRules("")
+	_, err := loadConfig("")
 	require.NoError(t, err)
 	require.Nil(t, filterRules)
 }
 
 func TestLoadFilterRulesNonExistentFile(t *testing.T) {
-	err := loadFilterRules("/non/existent/file.yaml")
+	_, err := loadConfig("/non/existent/file.yaml")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to read config file")
 }
@@ -830,7 +880,7 @@ func TestLoadFilterRulesInvalidRegex(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tmpfile.Close())
 
-	err = loadFilterRules(tmpfile.Name())
+	_, err = loadConfig(tmpfile.Name())
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid regex pattern")
 }
@@ -851,7 +901,7 @@ func TestLoadFilterRulesInvalidField(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tmpfile.Close())
 
-	err = loadFilterRules(tmpfile.Name())
+	_, err = loadConfig(tmpfile.Name())
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid field 'subjekt'")
 }
@@ -873,7 +923,7 @@ func TestLoadFilterRulesInvalidMatchType(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tmpfile.Close())
 
-	err = loadFilterRules(tmpfile.Name())
+	_, err = loadConfig(tmpfile.Name())
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid match type")
 }
@@ -897,7 +947,7 @@ func TestFilterRulesMatchAll(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tmpfile.Close())
 
-	err = loadFilterRules(tmpfile.Name())
+	_, err = loadConfig(tmpfile.Name())
 	require.NoError(t, err)
 
 	// Both conditions match - should reject (case-insensitive)
@@ -939,7 +989,7 @@ func TestFilterRulesMatchAny(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tmpfile.Close())
 
-	err = loadFilterRules(tmpfile.Name())
+	_, err = loadConfig(tmpfile.Name())
 	require.NoError(t, err)
 
 	// First condition matches - should reject
@@ -996,7 +1046,7 @@ func TestFilterRulesFieldMatching(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tmpfile.Close())
 
-	err = loadFilterRules(tmpfile.Name())
+	_, err = loadConfig(tmpfile.Name())
 	require.NoError(t, err)
 
 	// Test from field
@@ -1045,7 +1095,7 @@ func TestFilterRulesBodyOrHtml(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tmpfile.Close())
 
-	err = loadFilterRules(tmpfile.Name())
+	_, err = loadConfig(tmpfile.Name())
 	require.NoError(t, err)
 
 	// Pattern in body only - should reject
@@ -1084,7 +1134,7 @@ func TestFilterRulesHtmlOnlyEmail(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tmpfile.Close())
 
-	err = loadFilterRules(tmpfile.Name())
+	_, err = loadConfig(tmpfile.Name())
 	require.NoError(t, err)
 
 	// URL only in HTML - should reject
@@ -1117,7 +1167,7 @@ func TestFilterRulesFirstMatchWins(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tmpfile.Close())
 
-	err = loadFilterRules(tmpfile.Name())
+	_, err = loadConfig(tmpfile.Name())
 	require.NoError(t, err)
 
 	// Both rules would match, but first wins
@@ -1142,7 +1192,7 @@ func TestFilterRulesCaseInsensitive(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tmpfile.Close())
 
-	err = loadFilterRules(tmpfile.Name())
+	_, err = loadConfig(tmpfile.Name())
 	require.NoError(t, err)
 
 	// Pattern is lowercase, but should match uppercase
@@ -1179,7 +1229,7 @@ func TestFilterRulesEmptyConditions(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tmpfile.Close())
 
-	err = loadFilterRules(tmpfile.Name())
+	_, err = loadConfig(tmpfile.Name())
 	require.NoError(t, err)
 
 	// Empty conditions should not match
@@ -1188,13 +1238,9 @@ func TestFilterRulesEmptyConditions(t *testing.T) {
 }
 
 func TestSMTPStartWithNonExistentFilterRulesFile(t *testing.T) {
-	smtpConfig := makeSMTPConfig()
-	smtpConfig.ConfigFile = "/non/existent/filter_rules.yaml"
-	telegramConfig := makeTelegramConfig()
-
-	_, err := SMTPStart(smtpConfig, telegramConfig)
+	_, err := loadConfig("/non/existent/filter_rules.yaml")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "failed to load config")
+	require.Contains(t, err.Error(), "failed to read config file")
 }
 
 func TestFilteredEmailReturns554(t *testing.T) {
@@ -1310,4 +1356,100 @@ func TestNonFilteredEmailPasses(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.ChatIDs, ",")))
+}
+
+func TestForceReplyIncludedWhenEnabled(t *testing.T) {
+	smtpConfig := makeSMTPConfig()
+	telegramConfig := makeTelegramConfig()
+	telegramConfig.ForceReply = true
+	d := startSMTP(t, smtpConfig, telegramConfig)
+	defer d.Shutdown()
+
+	h := NewSuccessHandler()
+	s := HTTPServer(t, h)
+	defer func() { _ = s.Shutdown(context.Background()) }()
+
+	m := gomail.NewMessage()
+	m.SetHeader("From", "from@test")
+	m.SetHeader("To", "to@test")
+	m.SetHeader("Subject", "Test subj")
+	m.SetBody("text/plain", "Text body")
+
+	di := gomail.NewDialer(testSMTPListenHost, testSMTPListenPort, "", "")
+	err := di.DialAndSend(m)
+	require.NoError(t, err)
+
+	require.NotEmpty(t, h.RequestReplyMarkups)
+	require.Contains(t, h.RequestReplyMarkups[0], "force_reply")
+}
+
+func TestForceReplyNotIncludedWhenDisabled(t *testing.T) {
+	smtpConfig := makeSMTPConfig()
+	telegramConfig := makeTelegramConfig()
+	// ForceReply defaults to false
+	d := startSMTP(t, smtpConfig, telegramConfig)
+	defer d.Shutdown()
+
+	h := NewSuccessHandler()
+	s := HTTPServer(t, h)
+	defer func() { _ = s.Shutdown(context.Background()) }()
+
+	m := gomail.NewMessage()
+	m.SetHeader("From", "from@test")
+	m.SetHeader("To", "to@test")
+	m.SetHeader("Subject", "Test subj")
+	m.SetBody("text/plain", "Text body")
+
+	di := gomail.NewDialer(testSMTPListenHost, testSMTPListenPort, "", "")
+	err := di.DialAndSend(m)
+	require.NoError(t, err)
+
+	require.NotEmpty(t, h.RequestReplyMarkups)
+	require.Empty(t, h.RequestReplyMarkups[0])
+}
+
+func TestLoadConfigYAMLCredentialsWithoutHost(t *testing.T) {
+	tmpfile, err := os.CreateTemp("", "config_smtp_nohost*.yaml")
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(tmpfile.Name()) }()
+
+	content := `smtp_out:
+  port: 587
+  username: user@test
+  password: secret
+`
+	_, err = tmpfile.WriteString(content)
+	require.NoError(t, err)
+	require.NoError(t, tmpfile.Close())
+
+	smtpOut, err := loadConfig(tmpfile.Name())
+	require.NoError(t, err)
+	require.NotNil(t, smtpOut)
+	require.Empty(t, smtpOut.Host)
+	require.Equal(t, 587, smtpOut.Port)
+	require.Equal(t, "user@test", smtpOut.Username)
+	require.Equal(t, "secret", smtpOut.Password)
+}
+
+func TestFormatMessageMinimalHeaderOnHugeTo(t *testing.T) {
+	from := "sender@test"
+	// Build a To header that alone exceeds the limit
+	addrs := make([]string, 0, 100)
+	for i := range 100 {
+		addrs = append(addrs, fmt.Sprintf("recipient%d@example.com", i))
+	}
+	to := strings.Join(addrs, ", ")
+	subject := "Hello"
+	text := "body"
+
+	full, truncated := FormatMessage(from, to, subject, text, "", "", "", 80)
+	require.NotEmpty(t, truncated)
+	// The truncated message must contain parseable From/To/Subject headers
+	headers, err := ParseMessageHeaders(truncated)
+	require.NoError(t, err)
+	require.Equal(t, "sender@test", headers.From)
+	require.Contains(t, headers.To, "recipient0@example.com")
+	require.Equal(t, "Hello", headers.Subject)
+	// Full message still contains everything
+	require.Contains(t, full, to)
 }

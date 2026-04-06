@@ -36,19 +36,20 @@ var (
 	filterRules []FilterRule
 
 	// Sentinel errors
-	errInvalidMatchType       = errors.New("invalid match type")
-	errInvalidField           = errors.New("invalid field")
-	errRejectedByFilter       = errors.New("email rejected by filter rule")
-	errReadingJSON            = errors.New("error reading json body of sendMessage")
-	errParsingJSON            = errors.New("error parsing json body of sendMessage")
-	errResponseNotOK          = errors.New("telegram API response not ok")
-	errUnknownFileType        = errors.New("unknown file type")
-	errEmailParsing           = errors.New("error occurred during email parsing")
-	errMessageTooLarge        = errors.New("message length is larger than forwarded-attachment-max-size")
-	errUnexpectedTruncation   = errors.New("unexpected length of truncated message")
-	errTelegramNon200         = errors.New("non-200 response from Telegram")
-	errSanitizedTelegramFail  = errors.New("telegram operation failed")
-	errBlacklistFileDeprecate = errors.New("--blacklist-file is deprecated, use --config-file with filter_rules in YAML instead")
+	errInvalidMatchType          = errors.New("invalid match type")
+	errInvalidField              = errors.New("invalid field")
+	errRejectedByFilter          = errors.New("email rejected by filter rule")
+	errReadingJSON               = errors.New("error reading json body of sendMessage")
+	errParsingJSON               = errors.New("error parsing json body of sendMessage")
+	errResponseNotOK             = errors.New("telegram API response not ok")
+	errUnknownFileType           = errors.New("unknown file type")
+	errEmailParsing              = errors.New("error occurred during email parsing")
+	errMessageTooLarge           = errors.New("message length is larger than forwarded-attachment-max-size")
+	errUnexpectedTruncation      = errors.New("unexpected length of truncated message")
+	errTelegramNon200            = errors.New("non-200 response from Telegram")
+	errSanitizedTelegramFail     = errors.New("telegram operation failed")
+	errBlacklistFileDeprecate    = errors.New("--blacklist-file is deprecated, use --config-file with filter_rules in YAML instead")
+	errTemplateNoLongerSupported = errors.New("ST_TELEGRAM_MESSAGE_TEMPLATE is no longer supported. The message format is now fixed to support the reply-to-email feature") // TODO: remove in 3.0.0 or later
 )
 
 type FilterCondition struct {
@@ -63,8 +64,14 @@ type FilterRule struct {
 	Conditions []FilterCondition `yaml:"conditions"`
 }
 
-type FilterConfig struct {
+type AppConfig struct {
 	FilterRules []FilterRule `yaml:"filter_rules"`
+	SMTPOut     struct {
+		Host     string `yaml:"host"`
+		Port     int    `yaml:"port"`
+		Username string `yaml:"username"`
+		Password string `yaml:"password"`
+	} `yaml:"smtp_out"`
 }
 
 const (
@@ -84,11 +91,11 @@ type TelegramConfig struct {
 	BotToken                         string
 	APIPrefix                        string
 	APITimeoutSeconds                float64
-	MessageTemplate                  string
 	ForwardedAttachmentMaxSize       int
 	ForwardedAttachmentMaxPhotoSize  int
 	ForwardedAttachmentRespectErrors bool
 	MessageLengthToSendAsFile        uint
+	ForceReply                       bool
 }
 
 type TelegramAPIMessageResult struct {
@@ -104,6 +111,8 @@ type TelegramAPIMessage struct {
 type FormattedEmail struct {
 	From        string
 	To          string
+	CC          string
+	ReplyTo     string
 	Subject     string
 	Text        string
 	HTML        string
@@ -144,6 +153,9 @@ func main() {
 			if cmd.String("blacklist-file") != "" {
 				return errBlacklistFileDeprecate
 			}
+			if os.Getenv("ST_TELEGRAM_MESSAGE_TEMPLATE") != "" {
+				return errTemplateNoLongerSupported
+			}
 			smtpPrimaryHost := cmd.String("smtp-primary-host")
 			if smtpPrimaryHost == "" {
 				smtpPrimaryHost, err = GetHostname()
@@ -171,17 +183,61 @@ func main() {
 				BotToken:                         cmd.String("telegram-bot-token"),
 				APIPrefix:                        cmd.String("telegram-api-prefix"),
 				APITimeoutSeconds:                cmd.Float64("telegram-api-timeout-seconds"),
-				MessageTemplate:                  cmd.String("message-template"),
 				ForwardedAttachmentMaxSize:       int(forwardedAttachmentMaxSize),
 				ForwardedAttachmentMaxPhotoSize:  int(forwardedAttachmentMaxPhotoSize),
 				ForwardedAttachmentRespectErrors: cmd.Bool("forwarded-attachment-respect-errors"),
 				MessageLengthToSendAsFile:        cmd.Uint("message-length-to-send-as-file"),
 			}
+
+			yamlSMTPOut, err := loadConfig(smtpConfig.ConfigFile)
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+
+			smtpOutConfig := &SMTPOutConfig{
+				Host:     cmd.String("smtp-out-host"),
+				Port:     cmd.Int("smtp-out-port"),
+				Username: cmd.String("smtp-out-username"),
+				Password: cmd.String("smtp-out-password"),
+			}
+			if yamlSMTPOut != nil {
+				if smtpOutConfig.Host == "" {
+					smtpOutConfig.Host = yamlSMTPOut.Host
+				}
+				if !cmd.IsSet("smtp-out-port") && yamlSMTPOut.Port != 0 {
+					smtpOutConfig.Port = yamlSMTPOut.Port
+				}
+				if smtpOutConfig.Username == "" {
+					smtpOutConfig.Username = yamlSMTPOut.Username
+				}
+				if smtpOutConfig.Password == "" {
+					smtpOutConfig.Password = yamlSMTPOut.Password
+				}
+			}
 			d, err := SMTPStart(smtpConfig, telegramConfig)
 			if err != nil {
 				return fmt.Errorf("start error: %w", err)
 			}
-			return awaitShutdown(ctx, &d)
+
+			allowedChatIDs, err := parseChatIDs(telegramConfig.ChatIDs)
+			if err != nil {
+				return fmt.Errorf("failed to parse telegram-chat-ids: %w", err)
+			}
+
+			allowedHosts := getAllowedHosts(smtpConfig)
+
+			var cancelPolling context.CancelFunc
+			if smtpOutConfig.IsConfigured() && slices.Contains(allowedHosts, ".") {
+				logger.Warning("smtp-out is configured with default allowed hosts (\".\"), which accepts any domain as sender. Set --smtp-allowed-hosts to restrict sender domains.")
+			}
+			if smtpOutConfig.IsConfigured() {
+				telegramConfig.ForceReply = true
+				pollCtx, cancel := context.WithCancel(context.Background())
+				cancelPolling = cancel
+				go PollTelegramUpdates(pollCtx, telegramConfig, smtpOutConfig, allowedChatIDs, allowedHosts)
+			}
+
+			return awaitShutdown(ctx, &d, cancelPolling)
 		},
 		Flags: []cli.Flag{
 			&cli.StringFlag{
@@ -236,12 +292,6 @@ func main() {
 				Value:   "https://api.telegram.org/",
 				Sources: cli.EnvVars("ST_TELEGRAM_API_PREFIX"),
 			},
-			&cli.StringFlag{
-				Name:    "message-template",
-				Usage:   "Telegram message template",
-				Value:   "From: {from}\\nTo: {to}\\nSubject: {subject}\\n\\n{body}\\n\\n{attachments_details}",
-				Sources: cli.EnvVars("ST_TELEGRAM_MESSAGE_TEMPLATE"),
-			},
 			&cli.Float64Flag{
 				Name:    "telegram-api-timeout-seconds",
 				Usage:   "HTTP timeout used for requests to the Telegram API",
@@ -280,6 +330,27 @@ func main() {
 				Value:   4095,
 				Sources: cli.EnvVars("ST_MESSAGE_LENGTH_TO_SEND_AS_FILE"),
 			},
+			&cli.StringFlag{
+				Name:    "smtp-out-host",
+				Usage:   "Outbound SMTP server host for reply-to-email feature",
+				Sources: cli.EnvVars("ST_SMTP_OUT_HOST"),
+			},
+			&cli.IntFlag{
+				Name:    "smtp-out-port",
+				Usage:   "Outbound SMTP server port",
+				Value:   587,
+				Sources: cli.EnvVars("ST_SMTP_OUT_PORT"),
+			},
+			&cli.StringFlag{
+				Name:    "smtp-out-username",
+				Usage:   "Outbound SMTP server username",
+				Sources: cli.EnvVars("ST_SMTP_OUT_USERNAME"),
+			},
+			&cli.StringFlag{
+				Name:    "smtp-out-password",
+				Usage:   "Outbound SMTP server password",
+				Sources: cli.EnvVars("ST_SMTP_OUT_PASSWORD"),
+			},
 		},
 	}
 	err := cmd.Run(context.Background(), os.Args)
@@ -299,21 +370,21 @@ func getAllowedHosts(smtpConfig *SMTPConfig) []string {
 	return allowedHosts
 }
 
-func loadFilterRules(filename string) error {
+func loadConfig(filename string) (*SMTPOutConfig, error) {
 	filterRules = nil
 
 	if filename == "" {
-		return nil
+		return nil, nil
 	}
 
 	data, err := os.ReadFile(filename) //nolint:gosec // User-specified config file path is intentional
 	if err != nil {
-		return fmt.Errorf("failed to read config file: %w", err)
+		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
 
-	var config FilterConfig
+	var config AppConfig
 	if err := yaml.Unmarshal(data, &config); err != nil {
-		return fmt.Errorf("failed to parse config YAML: %w", err)
+		return nil, fmt.Errorf("failed to parse config YAML: %w", err)
 	}
 
 	// Compile regex patterns
@@ -324,12 +395,12 @@ func loadFilterRules(filename string) error {
 			rule.Match = "all"
 		}
 		if rule.Match != "all" && rule.Match != "any" {
-			return fmt.Errorf("rule '%s': %w '%s' (must be 'all' or 'any')", rule.Name, errInvalidMatchType, rule.Match)
+			return nil, fmt.Errorf("rule '%s': %w '%s' (must be 'all' or 'any')", rule.Name, errInvalidMatchType, rule.Match)
 		}
 		for j := range rule.Conditions {
 			cond := &rule.Conditions[j]
 			if !isValidFilterField(cond.Field) {
-				return fmt.Errorf("rule '%s': %w '%s' (must be one of: from, to, subject, body, html, body_or_html)", rule.Name, errInvalidField, cond.Field)
+				return nil, fmt.Errorf("rule '%s': %w '%s' (must be one of: from, to, subject, body, html, body_or_html)", rule.Name, errInvalidField, cond.Field)
 			}
 			// Make pattern case-insensitive
 			pattern := cond.Pattern
@@ -338,7 +409,7 @@ func loadFilterRules(filename string) error {
 			}
 			compiled, err := regexp.Compile(pattern)
 			if err != nil {
-				return fmt.Errorf("rule '%s': invalid regex pattern '%s': %w", rule.Name, cond.Pattern, err)
+				return nil, fmt.Errorf("rule '%s': invalid regex pattern '%s': %w", rule.Name, cond.Pattern, err)
 			}
 			cond.regex = compiled
 		}
@@ -349,7 +420,15 @@ func loadFilterRules(filename string) error {
 	if logger != nil {
 		logger.Infof("Loaded %d filter rules from %s", len(filterRules), filename)
 	}
-	return nil
+
+	yamlSMTPOut := &SMTPOutConfig{
+		Host:     config.SMTPOut.Host,
+		Port:     config.SMTPOut.Port,
+		Username: config.SMTPOut.Username,
+		Password: config.SMTPOut.Password,
+	}
+
+	return yamlSMTPOut, nil
 }
 
 func isValidFilterField(field string) bool {
@@ -450,10 +529,6 @@ func SMTPStart(
 
 	logger = daemon.Log()
 
-	if err := loadFilterRules(smtpConfig.ConfigFile); err != nil {
-		return daemon, fmt.Errorf("failed to load config: %w", err)
-	}
-
 	err := daemon.Start()
 	return daemon, err
 }
@@ -539,6 +614,9 @@ func SendMessageToChat(
 		telegramConfig.BotToken,
 	)
 	formData := url.Values{"chat_id": {chatID}, "text": {message.Text}}
+	if telegramConfig.ForceReply {
+		formData.Set("reply_markup", `{"force_reply":true,"selective":true}`)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, strings.NewReader(formData.Encode()))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -759,6 +837,8 @@ func FormatEmail(envelope *mail.Envelope, telegramConfig *TelegramConfig) (*Form
 	from := envelope.MailFrom.String()
 	to := JoinEmailAddresses(envelope.RcptTo)
 	subject := env.GetHeader("subject")
+	cc := env.GetHeader("Cc")
+	replyTo := env.GetHeader("Reply-To")
 	html := env.HTML
 
 	fullMessageText, truncatedMessageText := FormatMessage(
@@ -766,13 +846,17 @@ func FormatEmail(envelope *mail.Envelope, telegramConfig *TelegramConfig) (*Form
 		to,
 		subject,
 		text,
+		cc,
+		replyTo,
 		formattedAttachmentsDetails,
-		telegramConfig,
+		telegramConfig.MessageLengthToSendAsFile,
 	)
 	if truncatedMessageText == "" { // no need to truncate
 		return &FormattedEmail{
 			From:        from,
 			To:          to,
+			CC:          cc,
+			ReplyTo:     replyTo,
 			Subject:     subject,
 			Text:        fullMessageText,
 			HTML:        html,
@@ -798,6 +882,8 @@ func FormatEmail(envelope *mail.Envelope, telegramConfig *TelegramConfig) (*Form
 	return &FormattedEmail{
 		From:        from,
 		To:          to,
+		CC:          cc,
+		ReplyTo:     replyTo,
 		Subject:     subject,
 		Text:        truncatedMessageText,
 		HTML:        html,
@@ -807,55 +893,72 @@ func FormatEmail(envelope *mail.Envelope, telegramConfig *TelegramConfig) (*Form
 
 func FormatMessage(
 	from, to, subject, text string,
+	cc, replyTo string,
 	formattedAttachmentsDetails string,
-	telegramConfig *TelegramConfig,
+	messageLengthToSendAsFile uint,
 ) (fullMessageText, truncatedMessageText string) {
-	fullMessageText = strings.TrimSpace(
-		strings.NewReplacer(
-			"\\n", "\n",
-			"{from}", from,
-			"{to}", to,
-			"{subject}", subject,
-			"{body}", strings.TrimSpace(text),
-			"{attachments_details}", formattedAttachmentsDetails,
-		).Replace(telegramConfig.MessageTemplate),
-	)
+	buildHeader := func() string {
+		var hdr strings.Builder
+		fmt.Fprintf(&hdr, "From: %s\n", from)
+		fmt.Fprintf(&hdr, "To: %s\n", to)
+		if strings.TrimSpace(cc) != "" {
+			fmt.Fprintf(&hdr, "CC: %s\n", cc)
+		}
+		if strings.TrimSpace(replyTo) != "" {
+			fmt.Fprintf(&hdr, "Reply-To: %s\n", replyTo)
+		}
+		fmt.Fprintf(&hdr, "Subject: %s", subject)
+		return hdr.String()
+	}
+
+	buildMessage := func(body string) string {
+		header := buildHeader()
+		var sb strings.Builder
+		sb.WriteString(header)
+		sb.WriteString("\n\n")
+		sb.WriteString(body)
+		if formattedAttachmentsDetails != "" {
+			sb.WriteString("\n\n")
+			sb.WriteString(formattedAttachmentsDetails)
+		}
+		return strings.TrimSpace(sb.String())
+	}
+
+	trimmedText := strings.TrimSpace(text)
+	fullMessageText = buildMessage(trimmedText)
+
 	fullMessageRunes := []rune(fullMessageText)
-	if uint(len(fullMessageRunes)) <= telegramConfig.MessageLengthToSendAsFile {
+	if uint(len(fullMessageRunes)) <= messageLengthToSendAsFile {
 		// No need to truncate
 		return fullMessageText, ""
 	}
 
-	emptyMessageText := strings.TrimSpace(
-		strings.NewReplacer(
-			"\\n", "\n",
-			"{from}", from,
-			"{to}", to,
-			"{subject}", subject,
-			"{body}", strings.TrimSpace(fmt.Sprintf(".%s", BodyTruncated)),
-			"{attachments_details}", formattedAttachmentsDetails,
-		).Replace(telegramConfig.MessageTemplate),
-	)
+	emptyMessageText := buildMessage(strings.TrimSpace(fmt.Sprintf(".%s", BodyTruncated)))
 	emptyMessageRunes := []rune(emptyMessageText)
-	if uint(len(emptyMessageRunes)) >= telegramConfig.MessageLengthToSendAsFile {
-		// Impossible to truncate properly
-		return fullMessageText, string(fullMessageRunes[:telegramConfig.MessageLengthToSendAsFile])
+	if uint(len(emptyMessageRunes)) >= messageLengthToSendAsFile {
+		// Headers alone exceed the limit. Build a minimal-header message
+		// so HandleTelegramReply can still parse From/To/Subject for replies.
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "From: %s\n", from)
+		firstTo := to
+		if before, _, ok := strings.Cut(to, ","); ok {
+			firstTo = strings.TrimSpace(before)
+		}
+		fmt.Fprintf(&sb, "To: %s\n", firstTo)
+		fmt.Fprintf(&sb, "Subject: %s\n\n[truncated]", subject)
+		minimalMsg := sb.String()
+		if minimalRunes := []rune(minimalMsg); uint(len(minimalRunes)) > messageLengthToSendAsFile {
+			minimalMsg = string(minimalRunes[:messageLengthToSendAsFile])
+		}
+		return fullMessageText, minimalMsg
 	}
 
-	maxBodyLength := telegramConfig.MessageLengthToSendAsFile - uint(len(emptyMessageRunes))
-	truncatedMessageText = strings.TrimSpace(
-		strings.NewReplacer(
-			"\\n", "\n",
-			"{from}", from,
-			"{to}", to,
-			"{subject}", subject,
-			// TODO cut by paragraphs + respect formatting
-			"{body}", strings.TrimSpace(fmt.Sprintf("%s%s",
-				string([]rune(strings.TrimSpace(text))[:maxBodyLength]), BodyTruncated)),
-			"{attachments_details}", formattedAttachmentsDetails,
-		).Replace(telegramConfig.MessageTemplate),
-	)
-	if uint(len([]rune(truncatedMessageText))) > telegramConfig.MessageLengthToSendAsFile {
+	maxBodyLength := messageLengthToSendAsFile - uint(len(emptyMessageRunes))
+	// TODO cut by paragraphs + respect formatting
+	truncatedBody := strings.TrimSpace(fmt.Sprintf("%s%s",
+		string([]rune(trimmedText)[:maxBodyLength]), BodyTruncated))
+	truncatedMessageText = buildMessage(truncatedBody)
+	if uint(len([]rune(truncatedMessageText))) > messageLengthToSendAsFile {
 		panic(fmt.Errorf("%w: maxBodyLength=%d, text=%s", errUnexpectedTruncation, maxBodyLength, truncatedMessageText))
 	}
 	return fullMessageText, truncatedMessageText
@@ -906,14 +1009,19 @@ func SanitizeBotToken(s, botToken string) string {
 	return strings.ReplaceAll(s, botToken, "***")
 }
 
-func awaitShutdown(ctx context.Context, d *guerrilla.Daemon) error {
+func awaitShutdown(ctx context.Context, d *guerrilla.Daemon, cancelPolling context.CancelFunc) error {
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGINT)
 	defer stop()
 
 	<-ctx.Done()
 	logger.Info("Shutdown signal caught")
 
-	// Graceful shutdown with timeout
+	// Stop polling first
+	if cancelPolling != nil {
+		cancelPolling()
+	}
+
+	// Graceful shutdown of SMTP with timeout
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
