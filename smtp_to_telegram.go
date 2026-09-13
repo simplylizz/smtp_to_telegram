@@ -521,6 +521,11 @@ func SMTPStart(
 		"save_process":       "HeadersParser|Header|Hasher|TelegramBot",
 		"log_received_mails": true,
 		"primary_mail_host":  smtpConfig.PrimaryHost,
+		// Sending an email may take several Telegram API calls, each up to
+		// ST_TELEGRAM_API_TIMEOUT_SECONDS. The default 30s would time out the
+		// SMTP transaction while the email is still being sent, causing
+		// duplicates on retry. 10 minutes matches the RFC 5321 DATA timeout.
+		"gw_save_timeout": "600s",
 	}
 	cfg.BackendConfig = bcfg
 
