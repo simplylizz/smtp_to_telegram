@@ -109,6 +109,8 @@ func TestTelegramUnreachable(t *testing.T) {
 
 	err := smtp.SendMail(smtpConfig.Listen, nil, "from@test", []string{"to@test"}, []byte(`hi`))
 	require.Error(t, err)
+	// Telegram failures are transient: the sender should retry, not bounce
+	require.Contains(t, err.Error(), "421")
 }
 
 func TestTelegramHttpError(t *testing.T) {
@@ -122,6 +124,8 @@ func TestTelegramHttpError(t *testing.T) {
 
 	err := smtp.SendMail(smtpConfig.Listen, nil, "from@test", []string{"to@test"}, []byte(`hi`))
 	require.Error(t, err)
+	// Telegram failures are transient: the sender should retry, not bounce
+	require.Contains(t, err.Error(), "421")
 }
 
 func TestEncodedContent(t *testing.T) {

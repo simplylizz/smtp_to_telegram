@@ -545,7 +545,7 @@ func TelegramBotProcessorFactory(
 					if task == backends.TaskSaveMail {
 						err := SendEmailToTelegram(envelope, telegramConfig)
 						if err != nil {
-							return backends.NewResult(fmt.Sprintf("554 Error: %s", err)), err
+							return backends.NewResult(fmt.Sprintf("%d Error: %s", smtpErrorCode(err), err)), err
 						}
 						return p.Process(envelope, task)
 					}
@@ -554,6 +554,16 @@ func TelegramBotProcessorFactory(
 			)
 		}
 	}
+}
+
+// smtpErrorCode picks the SMTP reply code for a failed email: Telegram failures
+// are likely transient, so the sender is asked to retry later instead of
+// dropping the email; everything else (e.g. filter rejections) is permanent.
+func smtpErrorCode(err error) int {
+	if errors.Is(err, errSanitizedTelegramFail) {
+		return 421
+	}
+	return 554
 }
 
 func SendEmailToTelegram(
