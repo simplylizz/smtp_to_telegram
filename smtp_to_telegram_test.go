@@ -128,6 +128,14 @@ func TestTelegramHttpError(t *testing.T) {
 	require.Contains(t, err.Error(), "421")
 }
 
+func TestInvalidLogLevel(t *testing.T) {
+	smtpConfig := makeSMTPConfig()
+	smtpConfig.LogLevel = "bogus"
+	d, err := SMTPStart(smtpConfig, makeTelegramConfig())
+	defer d.Shutdown()
+	require.ErrorContains(t, err, "not a valid logrus Level")
+}
+
 func TestEncodedContent(t *testing.T) {
 	smtpConfig := makeSMTPConfig()
 	telegramConfig := makeTelegramConfig()

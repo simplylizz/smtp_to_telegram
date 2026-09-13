@@ -84,6 +84,7 @@ type SMTPConfig struct {
 	MaxEnvelopeSize int64
 	AllowedHosts    string
 	ConfigFile      string
+	LogLevel        string
 }
 
 type TelegramConfig struct {
@@ -169,6 +170,7 @@ func main() {
 				MaxEnvelopeSize: smtpMaxEnvelopeSize,
 				AllowedHosts:    cmd.String("smtp-allowed-hosts"),
 				ConfigFile:      cmd.String("config-file"),
+				LogLevel:        cmd.String("log-level"),
 			}
 			forwardedAttachmentMaxSize, err := units.FromHumanSize(cmd.String("forwarded-attachment-max-size"))
 			if err != nil {
@@ -273,6 +275,12 @@ func main() {
 				Name:    "config-file",
 				Usage:   "Path to YAML configuration file",
 				Sources: cli.EnvVars("ST_CONFIG_FILE"),
+			},
+			&cli.StringFlag{
+				Name:    "log-level",
+				Usage:   "Logging level (debug, info, warn, error, fatal, panic)",
+				Value:   "info",
+				Sources: cli.EnvVars("ST_LOG_LEVEL"),
 			},
 			&cli.StringFlag{
 				Name:     "telegram-chat-ids",
@@ -505,7 +513,7 @@ func SMTPStart(
 	telegramConfig *TelegramConfig,
 ) (guerrilla.Daemon, error) {
 
-	cfg := &guerrilla.AppConfig{LogFile: log.OutputStdout.String()}
+	cfg := &guerrilla.AppConfig{LogFile: log.OutputStdout.String(), LogLevel: smtpConfig.LogLevel}
 
 	cfg.AllowedHosts = getAllowedHosts(smtpConfig)
 
