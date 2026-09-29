@@ -660,7 +660,7 @@ QW5uYS1W6XJvbmlxdWUK
 
 	require.Len(t, h.RequestMessages, len(strings.Split(telegramConfig.ChatIDs, ",")))
 	exp :=
-		"From: from@test\n" +
+		"From: qBittorrent_notification@example.com\n" +
 			"To: to@test\n" +
 			"Subject: Anna-Véronique\n" +
 			"\n" +
@@ -1464,4 +1464,67 @@ func TestFormatMessageMinimalHeaderOnHugeTo(t *testing.T) {
 	require.Equal(t, "Hello", headers.Subject)
 	// Full message still contains everything
 	require.Contains(t, full, to)
+}
+
+func TestFromHeaderPreferredOverEnvelope(t *testing.T) {
+	smtpConfig := makeSMTPConfig()
+	telegramConfig := makeTelegramConfig()
+	d := startSMTP(t, smtpConfig, telegramConfig)
+	defer d.Shutdown()
+
+	h := NewSuccessHandler()
+	s := HTTPServer(t, h)
+	defer func() { _ = s.Shutdown(context.Background()) }()
+
+	err := smtp.SendMail(smtpConfig.Listen, nil, "bounces+123@em.example.com", []string{"to@test"}, []byte(
+		"From: Example Service <noreply@example.com>\r\nSubject: hi\r\n\r\nbody",
+	))
+	require.NoError(t, err)
+
+	require.NotEmpty(t, h.RequestMessages)
+	require.True(t, strings.HasPrefix(h.RequestMessages[0], "From: noreply@example.com\n"), h.RequestMessages[0])
+}
+
+func TestFilterFromMatchesHeaderOrEnvelope(t *testing.T) {
+	tmpfile, err := os.CreateTemp("", "filter_from_test*.yaml")
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(tmpfile.Name()) }()
+
+	content := `filter_rules:
+  - name: block-envelope
+    conditions:
+      - field: from
+        pattern: '@bounce\.example$'
+  - name: block-header
+    conditions:
+      - field: from
+        pattern: '@spammer\.example$'
+`
+	_, err = tmpfile.WriteString(content)
+	require.NoError(t, err)
+	require.NoError(t, tmpfile.Close())
+
+	smtpConfig := makeSMTPConfig()
+	smtpConfig.ConfigFile = tmpfile.Name()
+	telegramConfig := makeTelegramConfig()
+	d := startSMTP(t, smtpConfig, telegramConfig)
+	defer d.Shutdown()
+
+	h := NewSuccessHandler()
+	s := HTTPServer(t, h)
+	defer func() { _ = s.Shutdown(context.Background()) }()
+
+	send := func(envelopeFrom, headerFrom string) error {
+		return smtp.SendMail(smtpConfig.Listen, nil, envelopeFrom, []string{"to@test"}, []byte(
+			"From: "+headerFrom+"\r\nSubject: hi\r\n\r\nbody",
+		))
+	}
+
+	err = send("x@bounce.example", "ok@good.example")
+	require.ErrorContains(t, err, "block-envelope")
+
+	err = send("ok@good.example", "Evil <evil@spammer.example>")
+	require.ErrorContains(t, err, "block-header")
+
+	require.NoError(t, send("a@good.example", "b@good.example"))
 }

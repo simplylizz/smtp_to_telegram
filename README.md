@@ -51,8 +51,10 @@ Subject: {subject}
 {attachments_details}
 ```
 
-The `CC` and `Reply-To` lines are only shown when present. Custom message
-templates are no longer supported (breaking change in v2).
+`{from}` is the address from the `From:` header, or the SMTP envelope sender
+if the header is missing. The `CC` and `Reply-To` lines are only shown when
+present. Custom message templates are no longer supported (breaking change in
+v2).
 
 ## Reply to Email
 
@@ -176,7 +178,7 @@ filter_rules:
 
 | Field | Description |
 |-------|-------------|
-| `from` | Sender email address |
+| `from` | Sender email address; matches if the pattern matches either the `From:` header address or the SMTP envelope sender |
 | `to` | Recipient email address |
 | `subject` | Email subject line |
 | `body` | Plain text body |

@@ -110,14 +110,15 @@ type TelegramAPIMessage struct {
 }
 
 type FormattedEmail struct {
-	From        string
-	To          string
-	CC          string
-	ReplyTo     string
-	Subject     string
-	Text        string
-	HTML        string
-	Attachments []*FormattedAttachment
+	From         string
+	EnvelopeFrom string
+	To           string
+	CC           string
+	ReplyTo      string
+	Subject      string
+	Text         string
+	HTML         string
+	Attachments  []*FormattedAttachment
 }
 
 const (
@@ -588,7 +589,12 @@ func SendEmailToTelegram(
 		return err
 	}
 
-	if rejected, ruleName := checkFilterRules(message.From, message.To, message.Subject, message.Text, message.HTML); rejected {
+	// "from" filter rules match either the From header or the envelope sender.
+	rejected, ruleName := checkFilterRules(message.From, message.To, message.Subject, message.Text, message.HTML)
+	if !rejected && message.EnvelopeFrom != message.From {
+		rejected, ruleName = checkFilterRules(message.EnvelopeFrom, message.To, message.Subject, message.Text, message.HTML)
+	}
+	if rejected {
 		logger.Infof("Rejecting email: matched filter rule '%s'", ruleName)
 		return fmt.Errorf("%w: %s", errRejectedByFilter, ruleName)
 	}
@@ -857,7 +863,13 @@ func FormatEmail(envelope *mail.Envelope, telegramConfig *TelegramConfig) (*Form
 		)
 	}
 
-	from := envelope.MailFrom.String()
+	// Prefer the From header: the envelope sender of mail sent via ESPs is a
+	// bounce address (e.g. bounces+...@em.example.com), not the author.
+	envelopeFrom := envelope.MailFrom.String()
+	from := envelopeFrom
+	if addrs, err := env.AddressList("From"); err == nil && len(addrs) > 0 && addrs[0].Address != "" {
+		from = addrs[0].Address
+	}
 	to := JoinEmailAddresses(envelope.RcptTo)
 	subject := env.GetHeader("subject")
 	cc := env.GetHeader("Cc")
@@ -876,14 +888,15 @@ func FormatEmail(envelope *mail.Envelope, telegramConfig *TelegramConfig) (*Form
 	)
 	if truncatedMessageText == "" { // no need to truncate
 		return &FormattedEmail{
-			From:        from,
-			To:          to,
-			CC:          cc,
-			ReplyTo:     replyTo,
-			Subject:     subject,
-			Text:        fullMessageText,
-			HTML:        html,
-			Attachments: attachments,
+			From:         from,
+			EnvelopeFrom: envelopeFrom,
+			To:           to,
+			CC:           cc,
+			ReplyTo:      replyTo,
+			Subject:      subject,
+			Text:         fullMessageText,
+			HTML:         html,
+			Attachments:  attachments,
 		}, nil
 	}
 
@@ -903,14 +916,15 @@ func FormatEmail(envelope *mail.Envelope, telegramConfig *TelegramConfig) (*Form
 	}
 	allAttachments := slices.Concat([]*FormattedAttachment{at}, attachments)
 	return &FormattedEmail{
-		From:        from,
-		To:          to,
-		CC:          cc,
-		ReplyTo:     replyTo,
-		Subject:     subject,
-		Text:        truncatedMessageText,
-		HTML:        html,
-		Attachments: allAttachments,
+		From:         from,
+		EnvelopeFrom: envelopeFrom,
+		To:           to,
+		CC:           cc,
+		ReplyTo:      replyTo,
+		Subject:      subject,
+		Text:         truncatedMessageText,
+		HTML:         html,
+		Attachments:  allAttachments,
 	}, nil
 }
 
