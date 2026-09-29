@@ -1,11 +1,9 @@
 # SMTP to Telegram
 
 [![Docker Hub](https://img.shields.io/docker/pulls/simplylizz/smtp_to_telegram.svg?style=flat-square)][Docker Hub]
-[![Go Report Card](https://goreportcard.com/badge/github.com/simplylizz/smtp_to_telegram?style=flat-square)][Go Report Card]
 [![License](https://img.shields.io/github/license/simplylizz/smtp_to_telegram.svg?style=flat-square)][License]
 
 [Docker Hub]:      https://hub.docker.com/r/simplylizz/smtp_to_telegram
-[Go Report Card]:  https://goreportcard.com/report/github.com/simplylizz/smtp_to_telegram
 [License]:         https://github.com/simplylizz/smtp_to_telegram/blob/main/LICENSE
 
 Forked from [KostyaEsmukov/smtp_to_telegram](https://github.com/KostyaEsmukov/smtp_to_telegram) package.
