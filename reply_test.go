@@ -35,6 +35,16 @@ func TestParseMessageHeaders(t *testing.T) {
 			text: "From: sender@test\nTo: recipient@test\nSubject: Hello\n\nFrom: not-a-header@test",
 			want: ParsedHeaders{From: "sender@test", To: "recipient@test", Subject: "Hello"},
 		},
+		{
+			name: "Message-ID and multi-paragraph body",
+			text: "From: sender@test\nTo: recipient@test\nSubject: Hello\nMessage-ID: <abc@mail.test>\n\nPara 1\n\nPara 2",
+			want: ParsedHeaders{From: "sender@test", To: "recipient@test", Subject: "Hello", MessageID: "<abc@mail.test>"},
+		},
+		{
+			name: "no body",
+			text: "From: sender@test\nTo: recipient@test\nSubject: Hello",
+			want: ParsedHeaders{From: "sender@test", To: "recipient@test", Subject: "Hello"},
+		},
 		{name: "missing From", text: "To: recipient@test\nSubject: Hello\n\nBody", wantErr: true},
 		{name: "empty text", text: "", wantErr: true},
 	}
@@ -339,7 +349,7 @@ func TestSendReplyEmail(t *testing.T) {
 
 	config := &SMTPOutConfig{Host: host, Port: port}
 
-	err = SendReplyEmail(config, "me@test", []string{"sender@test"}, nil, "Re: Hello", "Thanks!")
+	err = SendReplyEmail(config, "me@test", []string{"sender@test"}, nil, "Re: Hello", "Thanks!", "")
 	require.NoError(t, err)
 
 	msg := <-received
@@ -347,6 +357,46 @@ func TestSendReplyEmail(t *testing.T) {
 	require.Contains(t, msg.to, "sender@test")
 	require.Contains(t, msg.data, "Re: Hello")
 	require.Contains(t, msg.data, "Thanks!")
+	require.NotContains(t, msg.data, "In-Reply-To:")
+	require.NotContains(t, msg.data, "References:")
+}
+
+func TestSendReplyEmail_ThreadingHeaders(t *testing.T) {
+	received := make(chan testEmail, 1)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer func() { _ = ln.Close() }()
+	go runTestSMTPServer(t, ln, received)
+
+	host, portStr, _ := net.SplitHostPort(ln.Addr().String())
+	port, _ := strconv.Atoi(portStr)
+	config := &SMTPOutConfig{Host: host, Port: port}
+
+	err = SendReplyEmail(config, "me@test", []string{"sender@test"}, nil, "Re: Hello", "Thanks!", "<abc@mail.test>")
+	require.NoError(t, err)
+
+	msg := <-received
+	require.Contains(t, msg.data, "In-Reply-To: <abc@mail.test>\n")
+	require.Contains(t, msg.data, "References: <abc@mail.test>\n")
+}
+
+func TestNormalizeMessageID(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"<abc@mail.test>", "<abc@mail.test>"},
+		{"  <abc@mail.test>  ", "<abc@mail.test>"},
+		{"abc@mail.test", "<abc@mail.test>"},
+		{"", ""},
+		{"<abc@mail.test>\nFrom: evil@test", ""},
+		{"<abc @mail.test>", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			require.Equal(t, tt.want, NormalizeMessageID(tt.in))
+		})
+	}
 }
 
 func TestHandleTelegramReply_Success(t *testing.T) {
@@ -361,7 +411,7 @@ func TestHandleTelegramReply_Success(t *testing.T) {
 	port, _ := strconv.Atoi(portStr)
 
 	config := &SMTPOutConfig{Host: host, Port: port}
-	originalText := "From: sender@test\nTo: me@test\nSubject: Hello\n\nOriginal body"
+	originalText := "From: sender@test\nTo: me@test\nSubject: Hello\nMessage-ID: <abc@mail.test>\n\nOriginal body"
 	update := makeBotReplyUpdate(999, originalText, "My reply")
 
 	notification := HandleTelegramReply(update, config, 999, []string{"."})
@@ -371,6 +421,7 @@ func TestHandleTelegramReply_Success(t *testing.T) {
 	require.Equal(t, "me@test", msg.from)
 	require.Contains(t, msg.to, "sender@test")
 	require.Contains(t, msg.data, "My reply")
+	require.Contains(t, msg.data, "In-Reply-To: <abc@mail.test>")
 }
 
 func TestHandleTelegramReply_NonBotMessage_Ignored(t *testing.T) {
@@ -418,7 +469,7 @@ func TestEndToEndReplyFlow(t *testing.T) {
 
 	// Step 1: Send email via SMTP -> forwarded to Telegram
 	err := smtp.SendMail(smtpConfig.Listen, nil, "sender@test", []string{"recipient@test"}, []byte(
-		"Subject: Test subject\r\n\r\nTest body",
+		"Subject: Test subject\r\nMessage-ID: <orig@sender.test>\r\n\r\nTest body",
 	))
 	require.NoError(t, err)
 	require.NotEmpty(t, h.RequestMessages)
@@ -446,6 +497,8 @@ func TestEndToEndReplyFlow(t *testing.T) {
 	msg := <-received
 	require.Contains(t, msg.data, "Test subject")
 	require.Contains(t, msg.data, "This is my reply!")
+	require.Contains(t, msg.data, "In-Reply-To: <orig@sender.test>")
+	require.Contains(t, msg.data, "References: <orig@sender.test>")
 }
 
 func TestSplitAddresses_RFC(t *testing.T) {

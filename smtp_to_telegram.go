@@ -874,6 +874,7 @@ func FormatEmail(envelope *mail.Envelope, telegramConfig *TelegramConfig) (*Form
 	subject := env.GetHeader("subject")
 	cc := env.GetHeader("Cc")
 	replyTo := env.GetHeader("Reply-To")
+	messageID := NormalizeMessageID(env.GetHeader("Message-ID"))
 	html := env.HTML
 
 	fullMessageText, truncatedMessageText := FormatMessage(
@@ -883,6 +884,7 @@ func FormatEmail(envelope *mail.Envelope, telegramConfig *TelegramConfig) (*Form
 		text,
 		cc,
 		replyTo,
+		messageID,
 		formattedAttachmentsDetails,
 		telegramConfig.MessageLengthToSendAsFile,
 	)
@@ -931,6 +933,7 @@ func FormatEmail(envelope *mail.Envelope, telegramConfig *TelegramConfig) (*Form
 func FormatMessage(
 	from, to, subject, text string,
 	cc, replyTo string,
+	messageID string,
 	formattedAttachmentsDetails string,
 	messageLengthToSendAsFile uint,
 ) (fullMessageText, truncatedMessageText string) {
@@ -945,6 +948,9 @@ func FormatMessage(
 			fmt.Fprintf(&hdr, "Reply-To: %s\n", replyTo)
 		}
 		fmt.Fprintf(&hdr, "Subject: %s", subject)
+		if messageID != "" {
+			fmt.Fprintf(&hdr, "\nMessage-ID: %s", messageID)
+		}
 		return hdr.String()
 	}
 

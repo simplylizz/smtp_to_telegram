@@ -45,6 +45,7 @@ To: {to}
 CC: {cc}
 Reply-To: {reply_to}
 Subject: {subject}
+Message-ID: {message_id}
 
 {body}
 
@@ -52,9 +53,9 @@ Subject: {subject}
 ```
 
 `{from}` is the address from the `From:` header, or the SMTP envelope sender
-if the header is missing. The `CC` and `Reply-To` lines are only shown when
-present. Custom message templates are no longer supported (breaking change in
-v2).
+if the header is missing. The `CC`, `Reply-To` and `Message-ID` lines are only
+shown when present. Custom message templates are no longer supported (breaking
+change in v2).
 
 ## Reply to Email
 
@@ -68,6 +69,8 @@ the bot will send your reply as an email back to the original sender.
 2. The bot sends the message with ForceReply enabled, prompting you to reply.
 3. You write a reply in Telegram.
 4. The bot sends your reply as an email to the original sender's address.
+   If the forwarded message has a `Message-ID` line, the reply sets
+   `In-Reply-To`/`References` so mail clients show it in the same thread.
 
 ### Configuration
 
@@ -94,6 +97,9 @@ smtp_out:
 
 - If the original email had multiple `To:` addresses, the first address is
   used as the sender address for the reply.
+- Replies are more likely to land in spam if the sending domain isn't
+  authenticated. Set up DKIM, SPF (via a custom MAIL FROM domain) and DMARC
+  for it with your SMTP provider.
 
 ## Development
 

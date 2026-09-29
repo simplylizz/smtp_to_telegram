@@ -71,11 +71,12 @@ func (c *SMTPOutConfig) IsConfigured() bool {
 
 // ParsedHeaders contains the parsed header fields from a Telegram message.
 type ParsedHeaders struct {
-	From    string
-	To      string
-	CC      string
-	ReplyTo string
-	Subject string
+	From      string
+	To        string
+	CC        string
+	ReplyTo   string
+	Subject   string
+	MessageID string
 }
 
 var (
@@ -105,6 +106,8 @@ func ParseMessageHeaders(text string) (ParsedHeaders, error) {
 			headers.ReplyTo = strings.TrimPrefix(line, "Reply-To: ")
 		case strings.HasPrefix(line, "Subject: "):
 			headers.Subject = strings.TrimPrefix(line, "Subject: ")
+		case strings.HasPrefix(line, "Message-ID: "):
+			headers.MessageID = strings.TrimPrefix(line, "Message-ID: ")
 		}
 	}
 
@@ -213,7 +216,21 @@ func findOwnAddress(addresses, allowedHosts []string) string {
 	return ""
 }
 
+// NormalizeMessageID returns the Message-ID in angle brackets, or "" if it
+// can't be safely written as a single header line.
+func NormalizeMessageID(id string) string {
+	id = strings.TrimSpace(id)
+	if id == "" || strings.ContainsFunc(id, func(r rune) bool { return r <= ' ' || r == 0x7f }) {
+		return ""
+	}
+	if !strings.HasPrefix(id, "<") {
+		id = "<" + id + ">"
+	}
+	return id
+}
+
 // SendReplyEmail sends a reply email via SMTP using the given configuration.
+// If inReplyTo is set, the reply is threaded under that Message-ID.
 func SendReplyEmail(
 	config *SMTPOutConfig,
 	from string,
@@ -221,6 +238,7 @@ func SendReplyEmail(
 	cc []string,
 	subject string,
 	body string,
+	inReplyTo string,
 ) error {
 	m := gomail.NewMessage()
 	m.SetHeader("From", from)
@@ -229,6 +247,10 @@ func SendReplyEmail(
 		m.SetHeader("Cc", cc...)
 	}
 	m.SetHeader("Subject", subject)
+	if inReplyTo != "" {
+		m.SetHeader("In-Reply-To", inReplyTo)
+		m.SetHeader("References", inReplyTo)
+	}
 	m.SetBody("text/plain", body)
 
 	d := gomail.NewDialer(config.Host, config.Port, config.Username, config.Password)
@@ -261,7 +283,8 @@ func HandleTelegramReply(update TelegramUpdate, smtpOutConfig *SMTPOutConfig, bo
 	if err != nil {
 		return "Could not determine sender address from the original email."
 	}
-	if err := SendReplyEmail(smtpOutConfig, from, to, cc, subject, msg.Text); err != nil {
+	inReplyTo := NormalizeMessageID(headers.MessageID)
+	if err := SendReplyEmail(smtpOutConfig, from, to, cc, subject, msg.Text, inReplyTo); err != nil {
 		return fmt.Sprintf("Failed to send email: %s", err)
 	}
 
@@ -451,6 +474,7 @@ func PollTelegramUpdates(
 			}
 			notification := HandleTelegramReply(update, smtpOutConfig, botUserID, allowedHosts)
 			if notification != "" {
+				logger.Infof("Reply to Telegram message %d: %s", update.Message.MessageID, notification)
 				sendNotification(ctx, telegramConfig, client, update.Message.Chat.ID, update.Message.MessageID, notification)
 			}
 		}

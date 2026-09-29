@@ -546,6 +546,7 @@ hoho
 		"From: from@test\n" +
 			"To: to@test\n" +
 			"Subject: test\n" +
+			"Message-ID: <20210829183010.11111111@HOST>\n" +
 			"\n" +
 			"Sun 29 Aug 2021 09:30:10 PM MSK\n" +
 			"\n" +
@@ -623,6 +624,7 @@ aG9obwo=
 		"From: from@test\n" +
 			"To: to@test\n" +
 			"Subject: test\n" +
+			"Message-ID: <2222222-000000-Bj@HOST>\n" +
 			"\n" +
 			"Sun 29 Aug 2021 09:30:23 PM MSK\n" +
 			"\n" +
@@ -1454,7 +1456,7 @@ func TestFormatMessageMinimalHeaderOnHugeTo(t *testing.T) {
 	subject := "Hello"
 	text := "body"
 
-	full, truncated := FormatMessage(from, to, subject, text, "", "", "", 80)
+	full, truncated := FormatMessage(from, to, subject, text, "", "", "<abc@mail.test>", "", 80)
 	require.NotEmpty(t, truncated)
 	// The truncated message must contain parseable From/To/Subject headers
 	headers, err := ParseMessageHeaders(truncated)
@@ -1527,4 +1529,16 @@ func TestFilterFromMatchesHeaderOrEnvelope(t *testing.T) {
 	require.ErrorContains(t, err, "block-header")
 
 	require.NoError(t, send("a@good.example", "b@good.example"))
+}
+
+func TestFormatMessageMessageID(t *testing.T) {
+	full, truncated := FormatMessage("sender@test", "me@test", "Hello", "body", "", "", "<abc@mail.test>", "", 4095)
+	require.Empty(t, truncated)
+	require.Equal(t, "From: sender@test\nTo: me@test\nSubject: Hello\nMessage-ID: <abc@mail.test>\n\nbody", full)
+	headers, err := ParseMessageHeaders(full)
+	require.NoError(t, err)
+	require.Equal(t, "<abc@mail.test>", headers.MessageID)
+
+	full, _ = FormatMessage("sender@test", "me@test", "Hello", "body", "", "", "", "", 4095)
+	require.NotContains(t, full, "Message-ID")
 }
