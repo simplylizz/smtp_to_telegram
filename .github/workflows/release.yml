@@ -56,8 +56,18 @@ jobs:
         with:
           fetch-depth: 0
 
+      # The section of CHANGELOG.md for this version becomes the release
+      # notes; GitHub's generated notes (the compare link) follow it.
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          awk -v version="$GITHUB_REF_NAME" '
+            /^## / { found = ($2 == version); next }
+            found' CHANGELOG.md > release_notes.md
+          cat release_notes.md
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
+          body_path: release_notes.md
           generate_release_notes: true
           prerelease: ${{ contains(github.ref_name, '-') }}

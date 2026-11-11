@@ -254,6 +254,10 @@ services:
       - ./spambox:/spambox
 ```
 
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md).
+
 ## Credits
 
 Forked from [KostyaEsmukov/smtp_to_telegram](https://github.com/KostyaEsmukov/smtp_to_telegram).
