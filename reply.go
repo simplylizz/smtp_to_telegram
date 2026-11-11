@@ -130,9 +130,9 @@ func ComposeReplyAddresses(headers *ParsedHeaders, allowedHosts []string) (from 
 		return "", nil, nil, "", errNoOwnAddress
 	}
 
-	if headers.ReplyTo != "" {
-		to = []string{headers.ReplyTo}
-	} else {
+	// Reply-To may hold display names and several addresses.
+	to = splitAddresses(headers.ReplyTo)
+	if len(to) == 0 {
 		to = []string{headers.From}
 	}
 

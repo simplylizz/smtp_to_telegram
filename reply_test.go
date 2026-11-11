@@ -553,3 +553,37 @@ func TestComposeReplyAddresses_RFC_QuotedComma(t *testing.T) {
 	require.Equal(t, []string{"sender@test"}, to)
 	require.Equal(t, []string{"other@example.com"}, cc)
 }
+
+func TestHandleTelegramReply_ReplyToForms(t *testing.T) {
+	tests := []struct {
+		name    string
+		replyTo string
+		wantTo  []string
+	}{
+		{"plain address", "replyto@test", []string{"replyto@test"}},
+		{"display name", `"Support, Team" <support@test>`, []string{"support@test"}},
+		{"several addresses", "one@test, Two <two@test>", []string{"one@test", "two@test"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			received := make(chan testEmail, 1)
+			ln, err := net.Listen("tcp", "127.0.0.1:0")
+			require.NoError(t, err)
+			defer func() { _ = ln.Close() }()
+			go runTestSMTPServer(t, ln, received)
+
+			host, portStr, _ := net.SplitHostPort(ln.Addr().String())
+			port, _ := strconv.Atoi(portStr)
+			config := &SMTPOutConfig{Host: host, Port: port}
+
+			originalText := "From: sender@test\nTo: me@test\nReply-To: " + tt.replyTo + "\nSubject: Hello\n\nOriginal body"
+			update := makeBotReplyUpdate(999, originalText, "My reply")
+
+			notification := HandleTelegramReply(update, config, 999, []string{"."})
+			require.Equal(t, "Email sent from me@test to "+strings.Join(tt.wantTo, ", "), notification)
+
+			msg := <-received
+			require.Equal(t, tt.wantTo, msg.to)
+		})
+	}
+}
