@@ -909,9 +909,9 @@ func FormatEmail(envelope *mail.Envelope, telegramConfig *TelegramConfig) (*Form
 		from = addrs[0].Address
 	}
 	to := JoinEmailAddresses(envelope.RcptTo)
-	subject := env.GetHeader("subject")
-	cc := env.GetHeader("Cc")
-	replyTo := env.GetHeader("Reply-To")
+	subject := SingleLine(env.GetHeader("subject"))
+	cc := SingleLine(env.GetHeader("Cc"))
+	replyTo := SingleLine(env.GetHeader("Reply-To"))
 	messageID := NormalizeMessageID(env.GetHeader("Message-ID"))
 	html := env.HTML
 
@@ -1084,6 +1084,15 @@ func EscapeMultiLine(b []byte) string {
 	s = strings.ReplaceAll(s, "\r", "\\r")
 	s = strings.ReplaceAll(s, "\n", "\\n")
 	return s
+}
+
+var lineBreaksRe = regexp.MustCompile(`[\r\n]+`)
+
+// SingleLine replaces line breaks with spaces. Decoded header values may
+// contain them (RFC 2047 encoded words), and in the forwarded message they
+// would look like extra header lines, which the reply feature would trust.
+func SingleLine(s string) string {
+	return lineBreaksRe.ReplaceAllString(s, " ")
 }
 
 func SanitizeBotToken(s, botToken string) string {

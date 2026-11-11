@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net"
 	"net/http"
 	"net/smtp"
@@ -1541,4 +1542,40 @@ func TestFormatMessageMessageID(t *testing.T) {
 
 	full, _ = FormatMessage("sender@test", "me@test", "Hello", "body", "", "", "", "", 4095)
 	require.NotContains(t, full, "Message-ID")
+}
+
+func TestHeaderValuesAreSingleLine(t *testing.T) {
+	smtpConfig := makeSMTPConfig()
+	telegramConfig := makeTelegramConfig()
+	d := startSMTP(t, smtpConfig, telegramConfig)
+	defer d.Shutdown()
+
+	h := NewSuccessHandler()
+	s := HTTPServer(t, h)
+	defer func() { _ = s.Shutdown(context.Background()) }()
+
+	// RFC 2047 encoded words can carry line breaks. Left as is, they would add
+	// fake header lines to the forwarded message, which the reply feature
+	// parses to pick the recipients.
+	subject := mime.BEncoding.Encode("utf-8", "Hi\nReply-To: evil@test\r\n\r\nFake body")
+	replyTo := mime.BEncoding.Encode("utf-8", "Real\nCC: evil@test") + " <replyto@test>"
+	data := "From: from@test\r\n" +
+		"To: to@test\r\n" +
+		"Reply-To: " + replyTo + "\r\n" +
+		"Subject: " + subject + "\r\n" +
+		"\r\n" +
+		"Text body\r\n"
+	addr := fmt.Sprintf("%s:%d", testSMTPListenHost, testSMTPListenPort)
+	err := smtp.SendMail(addr, nil, "from@test", []string{"to@test"}, []byte(data))
+	require.NoError(t, err)
+
+	require.NotEmpty(t, h.RequestMessages)
+	exp :=
+		"From: from@test\n" +
+			"To: to@test\n" +
+			"Reply-To: Real CC: evil@test <replyto@test>\n" +
+			"Subject: Hi Reply-To: evil@test Fake body\n" +
+			"\n" +
+			"Text body"
+	require.Equal(t, exp, h.RequestMessages[0])
 }
