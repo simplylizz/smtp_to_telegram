@@ -588,7 +588,10 @@ func TelegramBotProcessorFactory(
 					if task == backends.TaskSaveMail {
 						err := SendEmailToTelegram(envelope, telegramConfig)
 						if err != nil {
-							return backends.NewResult(fmt.Sprintf("%d Error: %s", smtpErrorCode(err), err)), err
+							// An SMTP reply is a single line: anything after a
+							// newline would not reach the sender.
+							reply := fmt.Sprintf("%d Error: %s", smtpErrorCode(err), EscapeMultiLine([]byte(err.Error())))
+							return backends.NewResult(reply), err
 						}
 						return p.Process(envelope, task)
 					}
