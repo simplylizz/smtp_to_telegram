@@ -174,7 +174,7 @@ filter_rules:
 
 | Field | Description |
 |-------|-------------|
-| `name` | Rule identifier (used in logs) |
+| `name` | Rule identifier (used in logs and in the spambox) |
 | `match` | `all` (default) - all conditions must match; `any` - at least one condition must match |
 | `conditions` | List of conditions to evaluate |
 
@@ -196,3 +196,62 @@ filter_rules:
 3. After an email is parsed, each rule is evaluated in order
 4. First matching rule rejects the email with a 554 SMTP error
 5. If no rules match, the email is forwarded to Telegram
+
+### Spambox
+
+Rejected emails are lost by default: the sender gets a 554 error and the log
+has only the rule name, the sender and the subject. To keep a copy for
+reviewing and tuning the rules, set a spambox file:
+
+```
+ST_SPAMBOX_FILE=/spambox/spambox.jsonl
+ST_SPAMBOX_MAX_SIZE=10m
+```
+
+Or use the `--spambox-file` and `--spambox-max-size` command line flags.
+
+Each rejected email is appended as one line of JSON
+([JSON Lines](https://jsonlines.org/)):
+
+| Key | Description |
+|-----|-------------|
+| `time` | When the email was rejected (UTC, RFC 3339) |
+| `rule` | Name of the rule that rejected it |
+| `from`, `to`, `subject` | The values the filter fields of the same names were matched against |
+| `envelope_from` | SMTP envelope sender, only if it differs from `from` |
+| `text` | The message as it would have been posted to Telegram: the header lines, then the plain text body (truncated if long). This is what the `body` field matches |
+| `html` | HTML body, if any, limited to 64 KiB (`html_truncated` is then `true`) |
+
+Attachments are not saved. Some ways to read the file with [jq](https://jqlang.org/):
+
+```
+# The last 5 rejected emails, as text
+tail -n 5 spambox.jsonl | jq -r '"=== \(.time) \(.rule)\n\(.text)\n"'
+
+# How many emails each rule rejected
+jq -r .rule spambox.jsonl | sort | uniq -c | sort -rn
+
+# Everything rejected by one rule
+jq 'select(.rule == "block-spam")' spambox.jsonl
+```
+
+- When the file would grow past `ST_SPAMBOX_MAX_SIZE` (default `10m`), it is
+  renamed to `<file>.1`, replacing the previous `.1`. So at most twice that
+  size is kept.
+- To rotate the file with your own tooling instead (e.g. logrotate), set
+  `ST_SPAMBOX_MAX_SIZE=0`. The file is reopened for every email, so it can be
+  renamed or removed at any time; no signal or `copytruncate` is needed.
+- The file must be writable at startup, otherwise the program exits. A failed
+  write later on is only logged; the email is rejected either way.
+- With Docker, mount a directory rather than the file itself (rotation renames
+  the file), and make it writable for the container user (`daemon`, uid 2,
+  unless you set another one):
+
+```yaml
+services:
+  smtp_to_telegram:
+    environment:
+      ST_SPAMBOX_FILE: /spambox/spambox.jsonl
+    volumes:
+      - ./spambox:/spambox
+```

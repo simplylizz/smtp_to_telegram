@@ -85,6 +85,8 @@ type SMTPConfig struct {
 	AllowedHosts    string
 	ConfigFile      string
 	LogLevel        string
+	SpamboxFile     string
+	SpamboxMaxSize  int64
 }
 
 type TelegramConfig struct {
@@ -152,6 +154,10 @@ func main() {
 			if err != nil {
 				return err
 			}
+			spamboxMaxSize, err := units.FromHumanSize(cmd.String("spambox-max-size"))
+			if err != nil {
+				return err
+			}
 			if cmd.String("blacklist-file") != "" {
 				return errBlacklistFileDeprecate
 			}
@@ -172,6 +178,8 @@ func main() {
 				AllowedHosts:    cmd.String("smtp-allowed-hosts"),
 				ConfigFile:      cmd.String("config-file"),
 				LogLevel:        cmd.String("log-level"),
+				SpamboxFile:     cmd.String("spambox-file"),
+				SpamboxMaxSize:  spamboxMaxSize,
 			}
 			forwardedAttachmentMaxSize, err := units.FromHumanSize(cmd.String("forwarded-attachment-max-size"))
 			if err != nil {
@@ -217,6 +225,14 @@ func main() {
 					smtpOutConfig.Password = yamlSMTPOut.Password
 				}
 			}
+			spambox = nil
+			if smtpConfig.SpamboxFile != "" {
+				spambox, err = NewSpambox(smtpConfig.SpamboxFile, smtpConfig.SpamboxMaxSize)
+				if err != nil {
+					return err
+				}
+			}
+
 			d, err := SMTPStart(smtpConfig, telegramConfig)
 			if err != nil {
 				return fmt.Errorf("start error: %w", err)
@@ -276,6 +292,19 @@ func main() {
 				Name:    "config-file",
 				Usage:   "Path to YAML configuration file",
 				Sources: cli.EnvVars("ST_CONFIG_FILE"),
+			},
+			&cli.StringFlag{
+				Name: "spambox-file",
+				Usage: "Append emails rejected by filter rules to this JSON Lines file. " +
+					"Disabled if empty.",
+				Sources: cli.EnvVars("ST_SPAMBOX_FILE"),
+			},
+			&cli.StringFlag{
+				Name: "spambox-max-size",
+				Usage: "When the spambox file reaches this size it is renamed to " +
+					"<file>.1, replacing the previous one. 0 -- never rotate. Examples: 500k, 10m.",
+				Value:   "10m",
+				Sources: cli.EnvVars("ST_SPAMBOX_MAX_SIZE"),
 			},
 			&cli.StringFlag{
 				Name:    "log-level",
@@ -595,7 +624,13 @@ func SendEmailToTelegram(
 		rejected, ruleName = checkFilterRules(message.EnvelopeFrom, message.To, message.Subject, message.Text, message.HTML)
 	}
 	if rejected {
-		logger.Infof("Rejecting email: matched filter rule '%s'", ruleName)
+		logger.Infof("Rejecting email: matched filter rule '%s' (from: %q, subject: %q)", ruleName, message.From, message.Subject)
+		if spambox != nil {
+			// The spambox is a diagnostic copy: the email is rejected either way.
+			if err := spambox.Add(ruleName, message, time.Now()); err != nil {
+				logger.Errorf("Failed to save rejected email to spambox: %s", err)
+			}
+		}
 		return fmt.Errorf("%w: %s", errRejectedByFilter, ruleName)
 	}
 
